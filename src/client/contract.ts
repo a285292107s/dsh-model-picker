@@ -1,0 +1,287 @@
+/**
+ * Structural contract of everything this plugin touches outside its own files.
+ *
+ * An out-of-repo client plugin cannot value-import Host packages, so the
+ * seat face, the shared directory store, the slot registry and the locale face
+ * are re-declared here as the minimal shapes this plugin actually reads. Every
+ * field below was checked against the shipping implementation
+ * (`ui-model-selection/src/client/{slots,directory}.ts`,
+ * `ui-slots/src/index.ts`, `ui-conversation/.../contract/slots.ts`); the
+ * `scripts/selfcheck-static.mjs` seat assertions guard the two values that the
+ * shadowing depends on (`name` and `priority`).
+ *
+ * @module dsh-model-picker/client/contract
+ */
+
+/** A complete model selection: provider + provider-owned model id + optional adapter effort. */
+export interface ModelSelection {
+  readonly provider: string
+  readonly model: string
+  readonly reasoningEffort?: string
+}/** One adapter-owned reasoning level for an exact model route. */
+export interface ModelReasoningEffort {
+  readonly id: string
+  readonly name: string
+}
+
+/** Adapter-owned reasoning metadata of one model route. */
+export interface ModelReasoning {
+  readonly efforts: readonly ModelReasoningEffort[]
+  readonly defaultEffort?: string
+}
+
+/** One model inside its provider group. */
+export interface CatalogModel {
+  readonly id: string
+  readonly name: string
+  readonly reasoning?: ModelReasoning
+}
+
+/** One successfully loaded provider and its models. */
+export interface ProviderGroup {
+  readonly id: string
+  readonly name: string
+  readonly models: readonly CatalogModel[]
+}
+
+/** One provider whose catalog lookup failed. */
+export interface CatalogFailure {
+  readonly id: string
+  readonly name: string
+  readonly message: string
+}
+
+/** Lifecycle of the directory's latest operation. */
+export type DirectoryStatus = 'idle' | 'loading' | 'ready' | 'selecting' | 'error'
+
+/** The per-session directory snapshot both selection entries render from. */
+export interface DirectoryState {
+  readonly current: ModelSelection | null
+  readonly retainedEffort?: string
+  readonly routable: boolean | null
+  readonly groups: readonly ProviderGroup[]
+  readonly failures: readonly CatalogFailure[]
+  readonly status: DirectoryStatus
+  readonly pending: ModelSelection | null
+  readonly error: string | null
+}
+
+/** The shared snapshot store (`@deepseek-ai/dsh-client-store`), read-only from here. */
+export interface DirectoryStore {
+  getSnapshot(): DirectoryState
+  subscribe(listener: () => void): () => void
+}
+
+/** One remote failure as the Host reports it. */
+export interface RemoteFailure {
+  readonly code: string
+  readonly message: string
+}
+
+/** The Host outcome of one selection request. */
+export type RemoteResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: RemoteFailure }
+
+/** One path-addressed edit, in the shape `settings/mutate` applies. */
+export interface SettingsOp {
+  readonly op: 'set' | 'unset'
+  readonly path: readonly string[]
+  readonly value?: unknown
+}
+
+/** One settings namespace as the Host describes it (secrets already redacted). */
+export interface SettingsNamespaceView {
+  readonly ns: string
+  readonly revision: number
+  /** The effective value: every layer merged and schema defaults applied. */
+  readonly value: unknown
+  /** The profile patch (the layer this plugin's clear button empties). */
+  readonly user?: unknown
+  /** The inherited value beneath the patch. */
+  readonly base?: unknown
+  readonly applies?: string
+}
+
+/** The whole settings surface: writability plus one view per namespace. */
+export interface SettingsDescribe {
+  readonly writable: boolean
+  readonly hasDocument: boolean
+  readonly namespaces: readonly SettingsNamespaceView[]
+}
+
+/**
+ * One provider route the Host can address in the settings document.
+ *
+ * `settingsNs` + `settingsPath` are the authoritative mapping from a catalog
+ * provider id to the namespace and the path that declare it — the same join the
+ * shipped Models settings page renders from.
+ */
+export interface ConfigurableProvider {
+  readonly provider: string
+  readonly displayName: string
+  readonly settingsNs: string
+  readonly settingsPath: readonly string[]
+  readonly declared?: boolean
+  readonly error?: string
+}
+
+/** The generated `ctx.remote.settings` namespace this plugin reads and writes. */
+export interface RemoteSettingsFace {
+  describe(): Promise<RemoteResult<SettingsDescribe>>
+  mutate(
+    ns: string,
+    ops: readonly SettingsOp[],
+    expectedRevision?: number,
+  ): Promise<RemoteResult<SettingsNamespaceView>>
+}
+
+/** The generated `ctx.remote.llm` namespace: the provider directory behind the panel. */
+export interface RemoteLlmFace {
+  listConfigurableProviders(): Promise<RemoteResult<readonly ConfigurableProvider[]>>
+}
+
+/** The two Remote faces the parameter panel needs, when the deployment mounts them. */
+export interface RemoteFace {
+  readonly settings: RemoteSettingsFace
+  readonly llm: RemoteLlmFace
+}
+
+/** Lifecycle of the settings read behind the parameter panel. */
+export type ParamsStatus = 'idle' | 'loading' | 'ready' | 'unavailable' | 'error'
+
+/** The immutable snapshot every surface of this plugin reads parameters from. */
+export interface ParamsSnapshot {
+  readonly status: ParamsStatus
+  /** Read failure text; a successful read clears it. */
+  readonly error: string | null
+  /** Whether the active profile accepts form edits at all. */
+  readonly writable: boolean
+  /** Provider routes the Host can address in the settings document. */
+  readonly providers: readonly ConfigurableProvider[]
+  /** Namespace views by namespace id. */
+  readonly namespaces: Readonly<Record<string, SettingsNamespaceView>>
+}
+
+/** Where one route's parameters are declared, and what that declaration says. */
+export interface RouteAddress {
+  /** The settings namespace (profile entry id) that owns this route. */
+  readonly ns: string
+  /** Path to the model entry inside that namespace's stored section. */
+  readonly entryPath: readonly string[]
+  /** Schema field carrying the declared modalities ('input' / 'inputModalities'). */
+  readonly inputField: string
+  /** Revision the Host expects back on the next write. */
+  readonly revision: number
+  /** Modalities declared for this route; empty when the entry declares none. */
+  readonly input: readonly string[]
+  /** Context window declared for this route, when it declares one. */
+  readonly contextWindow?: number
+  /** The adapter default that applies while the route declares no window. */
+  readonly defaultContextWindow?: number
+  /** Max output tokens declared for this route, when it declares one. */
+  readonly maxTokens?: number
+  /** The adapter default modalities that apply while the route declares none. */
+  readonly defaultInput: readonly string[]
+  /** Whether the profile patch itself carries one of the panel's fields. */
+  readonly declared: boolean
+}
+
+/** Outcome of one settings write. */
+export type WriteOutcome =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly conflict: boolean; readonly message: string }
+
+/** The parameter face the seat hands to the settings panel. */
+export interface ParamsFace {
+  subscribe(listener: () => void): () => void
+  getSnapshot(): ParamsSnapshot
+  ensure(): void
+  refresh(): Promise<void>
+  write(
+    ns: string,
+    ops: readonly SettingsOp[],
+    expectedRevision: number | undefined,
+  ): Promise<WriteOutcome>
+}
+
+/** Translation function bound to this plugin's namespace. */
+export type Translate = (key: string, params?: Record<string, string>) => string
+
+/** The framework-synthesized seat injected into the registered component. */
+export interface SeatInjected {
+  /** Whether this session supports Agent-bound model inspection and selection. */
+  readonly available: boolean
+  /** The session this seat instance belongs to (the settings panel is session-scoped). */
+  readonly sessionId: string
+  /** The session's shared directory store (same instance the /model popup reads). */
+  readonly directory: DirectoryStore
+  /** Ensure the shared advisory catalog is loaded (errors land on the store). */
+  readonly load: () => void
+  /** Submit a complete provider/model/effort selection. */
+  readonly select: (selection: ModelSelection) => Promise<RemoteResult<void> | undefined>
+  /** The Host settings behind the parameter panel, shared by every seat. */
+  readonly params: ParamsFace
+}
+
+/** The route a settings surface is about. */
+export interface ModelRoute {
+  readonly provider: string
+  readonly model: string
+}
+
+/** The locale service face this plugin uses for copy. */
+export interface LocaleFace {
+  register(ns: string, dictionaries: Record<string, Record<string, string>>): () => void
+  bind(ns: string): Translate
+}
+
+/** The session wire face: addressed subagents own no model selection entry. */
+export interface SessionFace {
+  subagentAddress(sessionId: string): unknown
+}
+
+/** One session's shared directory controller. */
+export interface DirectoryFace {
+  readonly store: DirectoryStore
+  load(): Promise<unknown>
+  select(selection: ModelSelection): Promise<RemoteResult<void>>
+}
+
+/** The `ctx.modelDirectories` service owned by ui-model-selection. */
+export interface ModelDirectories {
+  directoryFor(sessionId: string): DirectoryFace
+}
+
+/** The seat registration options this plugin passes. */
+export interface SlotRegisterOptions {
+  name: string
+  priority?: number
+  locale?: string
+  inject?: (sessionId: string) => Record<string, unknown>
+}
+
+/** The slot registry face (`ctx.slots`). */
+export interface SlotsFace {
+  inject(name: string, callback: () => unknown): void
+  register(options: SlotRegisterOptions, component: unknown): () => void
+}
+
+/** The minimal Cordis client context this plugin's apply reads. */
+export interface ClientContext {
+  effect(callback: () => void | (() => void), label?: string): void
+  get(name: 'locale'): LocaleFace | undefined
+  get(name: string): unknown
+  inject(names: readonly string[], callback: (scope: ClientContext) => void): void
+  readonly slots: SlotsFace
+  readonly sessions: SessionFace
+  readonly modelDirectories: ModelDirectories
+}
+
+/** Props the framework composes onto the registered seat component. */
+export type PickerProps = SeatInjected & {
+  /** Owner share: the seat is inert while the composer is locked. */
+  readonly locked: boolean
+  /** Locale seat, present because the registration declares `locale`. */
+  readonly t?: Translate
+  /** Local translator carried on the inject face: always present, used when `t` is not. */
+  readonly translate: Translate
+}

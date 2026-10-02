@@ -1,0 +1,54 @@
+{
+  "name": "dsh-model-picker",
+  "description": "One-level composer model picker for DeepSeek Harness: shadows the conversation.input.model seat with a search-first single list whose rows state read-only facts (text/image input, reasoning effort, context window) as badges.",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-model-selection",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "build": "node scripts/build-client.mjs",
+    "typecheck": "tsc --noEmit",
+    "selfcheck": "node scripts/selfcheck-static.mjs",
+    "contrast": "node scripts/check-contrast.mjs",
+    "test:params": "node scripts/test-params.mjs",
+    "test": "npm run build && npm run selfcheck && npm run contrast && npm run test:params"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "esbuild": "^0.24.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "typescript": "^5.6.0"
+  }
+}
