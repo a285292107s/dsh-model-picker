@@ -25,6 +25,11 @@
  * popover at a time, never nested — and it owns and stops the keys it consumes,
  * exactly like the other two levels.
  *
+ * Opening it puts focus on the PANEL, not on the capacity field: the field is the
+ * only text input here, it commits on blur, and this card is anchored to the
+ * composer where a summoned keypad would cover it. `Tab` then walks the controls
+ * in the order they are rendered, which is the order the switches appear in.
+ *
  * @module dsh-model-picker/client/SettingsMenu
  */
 
@@ -33,7 +38,7 @@ import {
   useAnchoredPosition,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
-  useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore,
+  useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
   type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -188,33 +193,46 @@ export function SettingsMenu({
    * Read from the rendered panel rather than from component refs: the baseline
    * `Switch` forwards no ref, so a ref-based chain would silently drop both
    * switches and leave them unreachable by keyboard.
+   *
+   * The order here is the order the controls are RENDERED in, which is the only
+   * defensible one: the two modality switches sit above the capacity field, so a
+   * chain that started at the field sent `Tab` backwards up the card — WCAG 2.4.3
+   * Focus Order, and a defect on its own regardless of where focus starts. The
+   * order is asserted against the JSX by the static gate in §5.10.
    * @returns the focusable elements, in order.
    */
   const chain = (): HTMLElement[] => {
     const panel = panelRef.current
     if (panel === null) return []
     return [
-      panel.querySelector<HTMLElement>('.dmp-settings-input input'),
       ...panel.querySelectorAll<HTMLElement>('[role="switch"]'),
+      panel.querySelector<HTMLElement>('.dmp-settings-input input'),
       ...panel.querySelectorAll<HTMLElement>('.dmp-effort-item'),
       panel.querySelector<HTMLElement>('.dmp-settings-reset'),
     ].filter((item): item is HTMLElement => item !== null && !item.hasAttribute('disabled'))
   }
 
-  /**
-   * Focus the first control this level can actually take focus on: while the
-   * panel is read-only every control is disabled, and a disabled target would
-   * silently leave the keyboard on the gear.
-   */
-  const focusFirst = (): void => {
-    chain()[0]?.focus()
-  }
+  // The PANEL takes initial focus, not its first control. Three reasons, none of
+  // them taste: a text field parked here summons the numeric keypad on touch —
+  // this card is anchored to the composer, so the keypad covers it; that field
+  // COMMITS ON BLUR, so a caret sitting there puts one stray Tab away from a
+  // write into the Host's own config; and a screen reader hears the field and
+  // its placeholder instead of the group label and the state line above it
+  // (§5.10). It also stops needing a read-only special case: the card can always
+  // take focus, where every control is disabled and a control-based target
+  // silently leaves the keyboard on the gear.
+  //
+  // Once, not on every placement: `position` is re-measured on scroll and
+  // resize, and re-running this would drag focus back out of whatever the seat
+  // was using — mid-edit in the capacity field, mid-arrow in the effort list.
+  const tookFocus = useRef(false)
 
-  // Gate focus on the measured position: while the card is still placing it is
-  // `visibility: hidden`, and a hidden control cannot take focus.
+  // Gated on the measured position: while the card is still placing it is
+  // `visibility: hidden`, and a hidden element cannot take focus.
   useLayoutEffect(() => {
-    if (position === null) return
-    focusFirst()
+    if (position === null || tookFocus.current) return
+    tookFocus.current = true
+    panelRef.current?.focus()
   }, [position])
 
   // The field shows the Host's value again when the route changes, and also when
@@ -412,6 +430,12 @@ export function SettingsMenu({
       role="group"
       aria-label={t('settings.aria', { model: modelLabel })}
       aria-busy={writing || busy}
+      // The card is this level's initial focus target (§5.10): it is announced
+      // by name, it exists in every state including read-only, and parking the
+      // caret in the one text field instead would summon the keypad and arm a
+      // blur-commit. `-1` keeps it out of the Host's own page-level `Tab` order —
+      // this card never participates in that traversal; its chain is `Tab` inside.
+      tabIndex={-1}
       onKeyDown={onKeyDown}
     >
       <div className="dmp-settings-head">

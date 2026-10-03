@@ -66,14 +66,31 @@ DSH 输入框模型选择器的外部替换件。把「Model / Effort 两格 →
 
 ## 安装
 
-由 DSH 自己写 profile（不要手改 profile 的 `package.json` / `cordis.patch.yml`）：
+由 DSH 自己写 profile（不要手改 profile 的 `package.json` / `cordis.patch.yml`）。
+在插件的「添加插件」输入框里粘贴 **GitHub 仓库地址**即可：
+
+```
+github:a285292107s/dsh-model-picker
+```
+
+或写成 `https://github.com/a285292107s/dsh-model-picker`。
+
+这条命令：拉取仓库 → 加进 `dsh.profile.bundles` → 应用包内 `cordis.patch.yml` 的 insert 行。
+返回 `application: applied` 即生效；页面刷新后新座位接管。
+
+> ⚠ **必须带 `github:` 前缀或完整地址。** npm 上的 `dsh-model-picker` 是**另一个人的包**
+> （`Sanqi-normal/dsh-model-picker`，`main` 指向 `lib/host.js`）。只粘包名会装到它。
+
+> ⚠ **git 安装不会构建。** `lib/` 是**提交进仓库**的产物，不是安装时生成的——pnpm 拉 git
+> tarball 只搬运仓库里已有的文件，没有构建步骤。所以改了 `src/` 必须重新 `npm run build`
+> 并连同 `lib/` 一起提交，否则用户装到的是旧行为（或 `lib/` 缺失时报
+> `failed to import`）。`npm test` 里的 `test:fresh` 门会拦住这种漂移。
+
+**本机开发**用 `link:` 指向工作目录（改完 `npm run build` 刷新页面即生效）：
 
 ```
 plugin_manager { action: "install_bundle", target: "C:/Users/28529/Desktop/dsh-model-picker" }
 ```
-
-这条命令：以 `link:` 装进当前 profile → 加进 `dsh.profile.bundles` → 应用包内 `cordis.patch.yml` 的 insert 行。
-返回 `application: applied` 即生效；页面刷新后新座位接管。
 
 **回退**：`plugin_manager { action: "remove_bundle", target: "dsh-model-picker" }`，或删掉 insert 行。
 
@@ -83,11 +100,15 @@ plugin_manager { action: "install_bundle", target: "C:/Users/28529/Desktop/dsh-m
 npm install          # esbuild + typescript + @types/react
 npm run build        # esbuild → lib/index.js（宿主）+ lib/client.js（客户端）
 npm run typecheck    # tsc --noEmit
+npm run test:fresh   # lib/ 与 src/ 是否一致（产物漂移门）
 npm run selfcheck    # 静态禁令 + 座位契约 + 文案键 + 面板/触发器/筛选契约
 npm run contrast     # 文字对比度门：两个主题下按真实字号判 WCAG AA
 npm run test:params  # 参数寻址/容量 + 行内事实推导 + 面板文案决策的单元门
-npm test             # build + selfcheck + contrast + test:params
+npm test             # build + test:fresh + selfcheck + contrast + test:params
 ```
+
+> `lib/` 是提交进仓库的（见「安装」）。**动过 `src/` 就要把重建后的 `lib/` 一起提交**，
+> `npm run test:fresh` 会在 `lib/` 与 `src/` 不一致时失败。
 
 `npm run contrast` 需要本机装有 DSH；找不到时 `skip`。它量的是两种下层底色里较差的那种，
 面板浮在哪一层都不影响结论。
@@ -107,6 +128,7 @@ playwright-cli -s=verify --raw run-code --filename=./scripts/_accept-anchor-loss
 > DESIGN.md 里对它们的引用仍是待重写的清单。
 
 改了 `lib/client.js` 后刷新页面即可：宿主按产物哈希拼接 client 模块，重建后刷新会取到新文件。
+（`lib/` 已提交进仓库——见「安装」，重建后记得连同 `src/` 一起提交。）
 
 ## 结构
 

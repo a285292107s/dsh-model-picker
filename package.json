@@ -39,7 +39,8 @@
     "selfcheck": "node scripts/selfcheck-static.mjs",
     "contrast": "node scripts/check-contrast.mjs",
     "test:params": "node scripts/test-params.mjs",
-    "test": "npm run build && npm run selfcheck && npm run contrast && npm run test:params"
+    "test:fresh": "node scripts/check-build-fresh.mjs",
+    "test": "npm run build && npm run test:fresh && npm run selfcheck && npm run contrast && npm run test:params"
   },
   "license": "MIT",
   "devDependencies": {

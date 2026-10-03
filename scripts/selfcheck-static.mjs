@@ -25,7 +25,9 @@
  *      across its two viewBox grids;
  *  11. the provider narrowing is remembered PER SESSION, re-read on the session
  *      boundary, and the chip inherits the session model's own provider;
- *  12. the component acts on every verdict the pure layer hands it.
+ *  12. the component acts on every verdict the pure layer hands it;
+ *  12b. the parameter panel's focus: where opening it lands, and the order `Tab`
+ *      walks the controls in (which must be the order they are rendered in).
  *
  * Run: node scripts/selfcheck-static.mjs
  *
@@ -588,6 +590,69 @@ check(
   alertBlock !== null
     && /color:\s*var\(--dsw-alias-label-secondary\)/.test(alertBlock[1]),
   { block: alertBlock?.[1]?.replace(/\s+/g, ' ').trim() ?? null },
+)
+
+// --- 12b. §5.10 focus: where the panel puts focus, and in what order --------
+// This defect survives every other gate here and survives a screenshot: opening
+// the parameter panel put the caret in the context field, AND the `Tab` chain
+// started there, while the card renders the two modality switches ABOVE it. So
+// `Tab` walked backwards up the card (WCAG 2.4.3), and on touch that field's
+// `inputMode="numeric"` summoned the keypad over a card anchored to the
+// composer. Both halves are decidable from one file by comparing two orders:
+// the selectors inside `chain()` and the order the JSX renders them in.
+const chainBlock = /const chain = \(\): HTMLElement\[\] => \{([\s\S]*?)\.filter\(/.exec(settings)?.[1] ?? null
+const CHAIN_SELECTOR = /'(\[[^\]]+\]|\.[a-z0-9-]+(?: input)?)'/g
+const chainOrder = chainBlock === null ? [] : [...chainBlock.matchAll(CHAIN_SELECTOR)].map(match => match[1])
+const rendered = settings.slice(settings.indexOf('return createPortal('))
+/** Each chain selector, with where its control first appears in the returned JSX. */
+const RENDERED_AT = [
+  ['[role="switch"]', rendered.indexOf('<Switch')],
+  ['.dmp-settings-input input', rendered.indexOf('dmp-settings-input')],
+  ['.dmp-effort-item', rendered.indexOf('dmp-effort-item')],
+  ['.dmp-settings-reset', rendered.indexOf('dmp-settings-reset')],
+]
+const renderOrder = RENDERED_AT
+  .filter(([, at]) => at >= 0)
+  .sort((left, right) => left[1] - right[1])
+  .map(([selector]) => selector)
+// The one documented exception to "chain == render order": 「恢复默认」 is painted
+// in the card header, top right, and is walked LAST anyway. A destructive action
+// must not be what the first `Tab` lands on, and the panel's initial focus is the
+// card itself — so the first `Tab` off the card reaches a switch, not the reset.
+const expectedChain = [...renderOrder.filter(selector => selector !== '.dmp-settings-reset'), '.dmp-settings-reset']
+check(
+  '§5.10: the focus chain is in the order the panel renders its controls',
+  renderOrder.length === RENDERED_AT.length
+    && chainOrder.length === expectedChain.length
+    && chainOrder.every((selector, index) => selector === expectedChain[index]),
+  { chain: chainOrder, rendered: renderOrder },
+)
+// The panel takes initial focus, not a control: a text field here summons the
+// keypad, arms a blur-commit, and is announced in place of the card's own name.
+// Read-only needs no special case for it either — the card can always focus,
+// where every control is disabled.
+check(
+  '§5.10: opening the panel focuses the panel itself, not its first control',
+  /tabIndex=\{-1\}/.test(settings)
+    && /panelRef\.current\?\.focus\(\)/.test(settings)
+    && !/chain\(\)\[0\]/.test(settings),
+  { tabIndex: /tabIndex=\{-1\}/.test(settings), focusesCard: /panelRef\.current\?\.focus\(\)/.test(settings) },
+)
+// `position` is re-measured on scroll and resize; re-running the focus effect
+// there would drag focus out of whatever the seat was using — mid-edit in the
+// capacity field, mid-arrow in the effort list.
+check(
+  '§5.10: re-measuring the card does not take focus back',
+  /tookFocus\.current/.test(settings) && /if \(position === null \|\| tookFocus\.current\) return/.test(settings),
+  { guard: /tookFocus\.current/.test(settings) },
+)
+// Focus on the card is only acceptable if it is visible (WCAG 2.4.7): the UA's
+// default outline reads as a selection border on a floating card, so the ring is
+// drawn in the same token the capacity field paints on `:focus-within`.
+check(
+  '§5.10: the focused panel paints a ring of its own',
+  /\.dmp-settings:focus-visible\s*\{[^}]*outline:/.test(stylesCode),
+  { rule: /\.dmp-settings:focus-visible\s*\{[^}]*\}/.exec(stylesCode)?.[0].replace(/\s+/g, ' ') ?? null },
 )
 
 // --- 13. §5.18 anchor loss: the popovers must CLOSE, not drift --------------

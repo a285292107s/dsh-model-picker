@@ -589,6 +589,17 @@ const CSS = `
   overflow: hidden;
 }
 
+/* The card holds initial focus when it opens (§5.10), so it needs a ring of its
+   own: without one the focus is invisible until the first Tab, and with the UA's
+   default outline it reads as a selection border around a floating card. Same
+   token the capacity field paints on focus-within, so the two never disagree
+   about which thing is focused. Mouse users never see it — focus-visible only
+   matches the keyboard path that opened the panel. */
+.dmp-settings:focus-visible {
+  outline: 1px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
 /* The panel's scroll viewport: the head and the state line stay put, everything
    below them scrolls inside the card. min-height: 0 is what lets the flex item
    shrink below its content and actually become scrollable. */
