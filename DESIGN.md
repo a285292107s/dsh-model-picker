@@ -99,8 +99,28 @@ volatile（= 允许在线改）——这正是「设置 → 模型」页改同�
 
 **由此定稿**：面板三个字段全部走真实写入口；「路由 → 位置」用 `listConfigurableProviders`，
 值用 `describe.value`，「这一项是不是你自己声明的」用 `describe.user`，写入用 `mutate` + revision。
-模型来自适配器内置目录（配置里没有声明条目）时**只能查看并说明**——`modelOverrides` 是 pi-ai 给这类
+模型来自适配器内置目录（配置里没有声明条目）时**没有可编辑的声明**——`modelOverrides` 是 pi-ai 给这类
 路由的入口，但它与 `models` 列表互斥（`dsh-llm-pi-ai/lib/index.js:645-655`），不能凭空造。
+
+### 2.2 追加契约核对：内置目录里的模型，能力到底读不读得到（2026-10-04 复核）
+
+用户提问原文：「当前模型来自适配器内置目录，没有可编辑的声明，只能查看。那么能够读取这个模型是否支持
+图文、上下文窗口大小等数据吗？能就展示出来。」读不到就只能承认读不到，所以先把通路逐条核实：
+
+| 契约 | 结论 | 证据 |
+|---|---|---|
+| 座位目录仍只有 `{ provider, model, reasoning }`（`buildModelCatalog` 解析了 `inputModalities` / `context` 却**只保留 reasoning**） | ✅ 座位目录读不到 | `dsh-api-session-controller/lib/types/catalog.js:10-59`（第 16 行 resolve，第 29-34 行只留 id/name/description/reasoning） |
+| `llm/discoverModels(settingsNs, { provider })` 是 `@Remote`，返回 `{ id, name?, contextWindow?, maxTokens?, inputModalities? }` | ✅ 客户端可调，且字段够用 | `dsh-llm/lib/typert.remote-client.js:40-75`（`implementation: remoteDiscoverModels`）；返回结构同文件 `:14-20` 的 zod schema |
+| 官方 pi-ai 的 discovery 对**自己发布过**的路由直接回答安装目录，对**只在配置里出现**的路由会去问 endpoint | ⚠️ 后者会联网 + 用凭据，**因此必须避开** | `dsh-llm-pi-ai/lib/index.js:2286-2298`（`catalogModels(provider)` 命中即返回，否则要求 baseURL 并 fetch 列表） |
+| 适配器目录里的 `declared` 正是"它只从配置知道这个路由"的自述 | ✅ 这就是避开的判据 | `dsh-llm/lib/types/types.d.ts:236-244`（`declared?: boolean` 的语义就是这条） |
+| `dsh-opencode-go` 不注册 configurable provider，**在设置目录里根本不存在**，所以第 2 行那条路对它无效 | ✅ 它对 `resolveRoute` 永远是 null（这正是用户看到的状态） | `dsh-opencode-go/lib/index.js` 全文无 `registerConfigurableProviders`；本机 profile 的 `cordis.patch.yml` 里也没有 `dsh-opencode-go` 的声明条目 |
+| 但它把自己的目录挂在 `opencodeGoModels/read` 上，条目含 `inputModalities`（models.dev 的 5 个 token）/ `contextWindow` / `maxTokens` | ✅ 唯一读得到它的路 | `dsh-opencode-go/lib/types/models-contract.d.ts`（`GoModel` + `INPUT_MODALITIES`）；`lib/index.js:1417-1430`（`describeConfiguredModels`）、`:1466-1476`（`discoverSettingsModels` 把 `details` 的 modalities 合进条目） |
+| 适配器自己的解析顺序是 `声明 ?? 安装目录 ?? provider 默认` | ✅ 徽章按同一顺序才对得上实际生效值 | pi-ai `:675-687`（`entry.contextWindow ?? base?.contextWindow ?? request.defaultContextWindow`、`declaredInput(entry.input) ?? base?.input ?? defaultInput`）；opencode-go `modelInfo()` `:1615-1622` |
+| remote 命名空间一律注册成 `remote.<namespace>` 服务，且由**拥有者**在自己激活时 `$mount` | ✅ 只能按需 `ctx.get`，不能激活时抓一次 | `dsh-api-gateway/lib/client.js:1919-1930`（`super(ctx, remoteServiceKey(name))`）、`:2040-2042`（键名 `remote.${namespace}`）、`:1964-1970`（方法调用用的是命名空间服务自己的 ctx，**不要求调用方 inject**） |
+
+**由此定稿**：能力事实走**两层**读取——先看适配器**自有**的目录 Remote（按 provider 路由登记），
+没有登记才用 `llm/discoverModels`，且**只在 `entry.declared !== true` 时**用。两者都答不了就
+保持"什么都没公布"，面板不画分区、行内不出徽章。
 
 ---
 
@@ -129,7 +149,8 @@ dsh-model-picker/
   src/client/contract.ts   # 外部结构类型（座位面/目录 store/插槽 registry/settings+llm remote/locale 面）
   src/client/Picker.tsx    # 提供商 chip + 触发器 + 齿轮 + 单层菜单（搜索 / 最近 / 分组 / 行内只读事实徽章）
   src/client/BadgeIcons.tsx# 四个徽章图标（16×16 自绘，含斜杠"不支持"变体）
-  src/client/badges.ts     # 行内事实推导（纯函数）：resolveRoute + reasoning → 该行能说的 1–4 条事实
+  src/client/badges.ts     # 行内事实推导（纯函数）：resolveRoute + 能力目录 + reasoning → 该行能说的 1–4 条事实
+  src/client/capabilities.ts # 适配器发布的能力目录（只读）：登记 reader、按需读取、按 rowKey 索引（§5.19）
   src/client/effort.ts     # 强度档位的命名与列表（参数面板与行内徽章共用同一套说法）
   src/client/SettingsMenu.tsx # 模型参数面板（输入类型 / 上下文窗口 / 思考强度 + 写入位置与失败原话）
   src/client/params.ts     # 参数寻址与读写：show 快照 ← describe，resolveRoute(route) → 地址，write() → mutate
@@ -143,6 +164,7 @@ dsh-model-picker/
   scripts/selfcheck-static.mjs # 样式禁令 + 座位契约 + 死类双向比对 + 文案键 + 写入口契约 + 行内无控件契约 + 面板滚动/触发器/筛选持久化契约
   scripts/test-params.mjs  # 参数寻址/容量 + 行内事实推导的单元门（合成快照，纯函数）
   scripts/_icons-probe.cjs # 徽章图标候选的浏览器对比图（开发用）
+  scripts/_accept-capabilities.cjs # §5.19 浏览器验收（只读）：行内徽章 + 面板 + 两张证据截图
   scripts/_verify-fixes.cjs # 三次返工的浏览器验收（筛选持久化 / 面板底色 / 触发器文案；只写 localStorage）
   DESIGN.md / README.md
 ```
@@ -161,10 +183,13 @@ Picker ── useSyncExternalStore(directory.store) ──► 列表/搜索/最�
         │           （与 /model 弹窗同一 store → 双向同步，无需额外代码）
         ├─ prefs.ts 读写 providerFilter（localStorage，键里带会话 id）──► 刷新后仍是本会话上次的提供商筛选
         ├─ useSyncExternalStore(params) ──► ① 齿轮的"已自定义"标记 ② 行内徽章的事实（只读快照）
-        │         └─ badges.ts badgeSpecsOf(resolveRoute(snapshot, route), reasoning, effort)
+        │         └─ badges.ts badgeSpecsOf(resolveRoute(snapshot, route), capabilityOf(route), reasoning, effort)
         │                    ──► 1–4 条 { fact, off, value, sentence }（纯函数，单元门覆盖）
+        ├─ useSyncExternalStore(capabilities) ──► §5.19：适配器发布的能力事实（菜单打开时 ensure）
+        │         └─ capabilities.ts ensure(providers) ──┬─ 登记的适配器自有 Remote（opencodeGoModels/read）
+        │                                                └─ llm/discoverModels（仅 declared !== true 的路由）
         └─ SettingsMenu ── resolveRoute(snapshot, route) ──► 地址（ns + entryPath + revision）
-                     ├─ 显示：describe.value / describe.user / adapter 默认值
+                     ├─ 显示：describe.value / describe.user / adapter 默认值 / 适配器目录公布的事实
                      └─ 写入：settings.mutate(ns, ops, revision) ──► profile 的 cordis.patch.yml
                                   └─ 冲突 → 重读一次再重试；拒绝 → 原话显示、值不动
                      强度那一项仍走 directory.select() ──► Host（面板是唯一入口）
@@ -173,6 +198,7 @@ Picker ── useSyncExternalStore(directory.store) ──► 列表/搜索/最�
 状态划分：**外部数据**（catalog/current/pending/error）全部读 `directory.store`；
 **设置快照**（provider 目录 + 各命名空间有效值/revision）读插件级的 `ParamsStore`（`useSyncExternalStore`），
 行内徽章与参数面板读的是**同一份恢复值**；
+**能力目录快照**（适配器自报的模态/窗口）读插件级的 `CapabilityStore`，同样是行内与面板共读一份（§5.19）；
 **视图状态**（打开、查询、高亮行、toast、参数面板的输入框草稿与写入中/错误）用组件本地 `useState`；
 **最近使用**用插件自有 `localStorage`，菜单打开时读、路由变化时写。
 模型参数**不落本地**——面板显示的一切都来自 Host 的 `describe`，
@@ -334,7 +360,8 @@ Picker ── useSyncExternalStore(directory.store) ──► 列表/搜索/最�
 `session/modelCatalog` 每条只有 `{ provider, model, reasoning }`、`llm/discoverModels` 只读。
 复核（§2.1）发现：座位目录确实读不到这些字段，但 **Host 的配置面可以读写模型参数**，
 而且两个适配器都把模型参数声明为 volatile——这就是「设置 → 模型」页改同一批字段所走的路。
-所以现在三项都是真写：
+所以现在三项都是真写（**没有声明条目的路由**另说：那时**写不了**，但不是"看不到"——
+适配器发布的目录仍然可读，见 §2.2 与 §5.19）：
 
 | 参数 | 真值来源 | 写入 |
 |---|---|---|
@@ -391,9 +418,12 @@ Picker ── useSyncExternalStore(directory.store) ──► 列表/搜索/最�
 
 **两类边界的实现取舍**
 
-1. **不可寻址 ≠ 假装可写**：模型来自适配器内置目录、配置里没有它的声明条目时，控件整体禁用并说明；
-   不会出现"拨了没反应"的开关。pi-ai 的 `modelOverrides` 是给这类路由的入口，但它与 `models`
-   列表互斥，凭空造条目等于替用户改 provider 声明——超出本面板的范围。
+1. **不可寻址 ≠ 假装可写，也 ≠ 假装不支持**：模型来自适配器内置目录、配置里没有它的声明条目时，
+   控件整体禁用并说明；不会出现"拨了没反应"的开关。而两个模态开关**显示适配器目录公布的值**
+   （§5.19）——初版在这里把两个开关都画成关闭，等于替模型宣布"既不收文字也不收图片"，这条没人验证过。
+   适配器**什么都没公布**时，该分区连开关带字段**整块不渲染**，由状态行说明不可编辑。pi-ai 的
+   `modelOverrides` 是给这类路由的入口，但它与 `models` 列表互斥，凭空造条目等于替用户改 provider
+   声明——超出本面板的范围。
 2. **两项全关**：一个都不接受的模型发不出任何请求，pi-ai 还会把空列表当成"未声明"回落到目录默认，
    所以面板拒绝"关掉最后一项"，提示用「恢复默认」回到默认态。
 
@@ -542,8 +572,8 @@ Picker ── useSyncExternalStore(directory.store) ──► 列表/搜索/最�
 | **localStorage 不可用**（隐私模式/沙箱） | 读写都吞掉：筛选本身照常工作，只是记不住；与「最近使用」同一条策略 |
 | **筛选排除了当前模型** | 列表里没有它，但**触发器照旧显示真实模型**（筛选是浏览辅助，不是状态改写）；`/model` 弹窗、Host 全部不受影响 |
 | **被筛选的提供商加载失败** | 该行在提供商菜单里禁用并标「加载失败」；若筛选已指向它（此前加载成功、后来失败），列表空 + 空状态文案 + 上方照旧显示 provider 警告行与重试 |
-| **参数面板：路由不可寻址** | 控件整体禁用 + 状态行说明"模型来自适配器内置目录、没有可编辑的声明"；不提供按了没反应的开关 |
-| **行内徽章：模态/窗口查不到** | 对应徽章**不渲染**（不是画成"不支持"）：路由不在 `llm/listConfigurableProviders`、条目既没声明、适配器默认也没有时就是这种情况。本机实测是 `xiaomiMiMo` 6 行 + `WorkBuddy` 3 行，这些行只剩强度徽章 |
+| **参数面板：路由不可寻址** | 控件整体禁用 + 状态行说明"模型来自适配器内置目录、没有可编辑的声明"；不提供按了没反应的开关。适配器**公布过**的事实照常陈述（§5.19），分区提示写明来源；**没公布**的分区整块不渲染 |
+| **行内徽章：模态/窗口查不到** | 对应徽章**不渲染**（不是画成"不支持"）：路由不在 `llm/listConfigurableProviders`、条目既没声明、适配器默认也没有、**且适配器目录也没公布**时就是这种情况 |
 | **行内徽章：模型没有 reasoning 元数据** | 强度徽章仍然渲染，但**划掉**并说明"未声明思考档位"；四个事实里"没有档位"也是事实，删除徽章会让行看起来缺了一块 |
 | **行内徽章：档位名很长**（适配器自由文本） | `.dmp-badge-value` 有 `max-width: 64px` + 省略号：只截断自己的值，徽章条被封顶在 161px，四枚胶囊始终完整留在行内（详见 §5.12） |
 | **行内徽章：模型名很长** | 名字先省略号（`min-width: 48px` 兜底），徽章条保持自己的宽度、不换行 |
@@ -584,8 +614,10 @@ Picker ── useSyncExternalStore(directory.store) ──► 列表/搜索/最�
   打包成一个无依赖 ESM，在 node 里断言寻址、容量解析**与行内事实推导**。
   徽章那批断言用**真实 zh 文案**（不是桩）比对整句，因为一个"句子写错的徽章"比一个缺失的徽章更糟：
   `['文字输入','不支持图片输入','思考强度 High','上下文窗口 800K']`、以及行 `aria-label` 的完整拼句。
-  退化分支也都有断言：不可寻址的路由只留强度徽章；既没声明又没有适配器默认时模态条整条不出现；
-  没有 `reasoning` 元数据时强度是划掉的。`npm test` = build + selfcheck + test:params。
+  退化分支也都有断言：不可寻址的路由只留强度徽章（**适配器也没公布**时）；既没声明又没有适配器默认时模态条整条不出现；
+  没有 `reasoning` 元数据时强度是划掉的；而适配器**公布过**的行内事实（§5.19 的能力轴）单独有一批断言。
+  能力目录本身（读取顺序、`declared` 守卫、一次一 provider、晚挂载的 reader）在同一门里用假 Remote 覆盖。
+  `npm test` = build + selfcheck + test:params。
 - **浏览器验收**：座位只有一层（无 root 两格）；搜索常驻并跨 provider；行内四个只读徽章与模型名同行，
   点行（含点徽章）只切模型、`/model` 打开显示同一状态；外点/Esc 关闭；`↑↓/Enter` 选中；
   `locked` / subagent 不渲染；窄屏只剩图标且不溢出；浅/深主题截图。
@@ -668,9 +700,10 @@ occupants:
 `imageOff → 图片=true` 那一步把开关拨回去时，卡片正好因焦点变化被关掉，回去的那次点击落在卡片外。
 它**只是脚本自己的手势**，不是写入失败；同一段逻辑在 §8.3 的手工复现里两次都正常。
 
-**本机没有构造的分支**（列出来免得被当成已验证）：路由不可寻址、profile 不接受表单编辑、
+**本机没有构造的分支**（列出来免得被当成已验证）：profile 不接受表单编辑、
 部署没挂设置服务/读取失败、`settings/conflict` 自动重试、Host 拒绝写入（`settings/rejected`）。
-前四条需要特定部署或畸形配置，第五条需要制造非法值——本机所有路由都寻址得到、所有写入都被接受。
+前四条需要特定部署或畸形配置（**"路由不可寻址"原本也在这张单子上，§5.19 之后本机默认模型就是
+这种路由，已在 §8.8 实测**），第五条需要制造非法值——本机所有写入都被接受。
 这几条的**决策逻辑**由 `test-params.mjs` 与 `params.ts` 的分支覆盖，但**没有在真实 Host 上观测到**。
 
 **"即时生效"的证据强度**：写入落盘（文件可查）+ 面板经 Host 往返（刷新后仍是新值）+ 适配器把
@@ -824,7 +857,7 @@ Host 往返记录覆盖，且这次没有改动提交逻辑）；② 浅色截�
 | `settings.readonly` 里的 "profile" 是文件名，不是用户能操作的概念 | 真缺陷 | 改「当前配置不接受表单修改」 |
 | 「恢复默认」在"本来就没有可恢复的改动"这个唯一没有解释的禁用态上静默不可用 | 真缺陷 | 补 `title`（`settings.resetNothing`） |
 | 「恢复默认」在"本来就没有可恢复的改动"这个唯一没有解释的禁用态上静默不可用 | 真缺陷 | 改成**分区提示**里的一句话（`restoreIsEmpty` + `settings.resetNothing`）——禁用按钮上的 `title` 无法被键盘聚焦到，等于没有解释 |
-| `inputHintOf` 在不可寻址时仍返回一句话，与状态行重复 | 真缺陷 | 改返回 `null`，两条 adapter 文案键随之删除（静态门的"死文案"断言逼出来的） |
+| `inputHintOf` 在不可寻址时仍返回一句话，与状态行重复 | 真缺陷 | 改返回 `null`，两条 adapter 文案键随之删除（静态门的"死文案"断言逼出来的）。**§5.19 部分撤回**：适配器**公布过**事实时那条提示要留着——它说的是"这个值从哪来"，状态行说的是"为什么不能改"，两件事不再算重复（Rule 1 逐状态重扫） |
 
 **第二轮对抗性复核（针对上面这些修复）发现并已修掉的问题**
 
@@ -1214,6 +1247,59 @@ chip，于是同一个控件开始说两件互斥的事：chip 说"你在这个 
 > `observeSeatLoss` 处切断捕获、三个调用**逐个**断言之后才抓住。**门漏掉的东西，就是没被写下来的判断。**
 > 最后一句也只证明"这八条改坏会被拦住"，不证明"该关而不是该重定位"是对的——那是判断，不是门。
 
+### 5.19 第八次反馈（2026-10-04）：内置目录里的模型，能力也要陈述出来
+
+用户看着"这个模型来自适配器内置目录，没有可编辑的声明，只能查看"这句话问：**那它的图文支持和
+上下文窗口读得到吗？能就展示出来。** §2.2 已把通路逐条核实过，这里记的是定稿与取舍。
+
+**缺陷先摆清楚。** 改动前，不可寻址的路由（本机就是默认模型 `dsh-opencode-go/deepseek-v4.1-flash`）：
+
+| 面 | 改动前 | 问题 |
+|---|---|---|
+| 行内徽章 | 只有强度徽章（模态与窗口整条不出现） | 不算错，但把"读不到"和"不支持"混在一起——用户无法区分 |
+| 面板输入分区 | **两个开关都画成关闭** | 这是**主动的错误陈述**：等于宣布该模型既不收文字也不收图片。`panelCopy` 的注释当时写着"禁用开关仍然显示模型接受什么"，而 `shownInputOf(null)` 返回 `[]`，两者互相打脸 |
+| 面板上下文分区 | 整块不渲染 | 用户拿不到窗口大小 |
+
+**定稿：加一层只读能力目录（`capabilities.ts`）。**
+
+1. **读取顺序 = 适配器自己的顺序**：`声明 → 适配器发布的目录 → provider 级默认`。
+   §2.2 已核对两个适配器就是这么解析的；换个顺序就会陈述一个适配器并不在用的窗口。
+   `badges.ts`、`panelCopy.ts` 的每一处取值都按这个梯子写，单元门对每级都有断言。
+2. **两条读取通路，显式的优先**：登记在 `ADAPTER_CATALOGS`（`index.ts`）里的适配器自有 Remote
+   （`dsh-opencode-go` → `opencodeGoModels/read`）先答；没有登记的才走 `llm/discoverModels`。
+   `dsh-opencode-go` 根本没注册 configurable provider，对它是**只有第一条路**。
+3. **`declared === true` 一律不读**。适配器自述"只从配置知道这个路由"时，它的 discovery 会离开进程
+   去打 endpoint（联网 + 用凭据）。开一次模型菜单就偷偷发这种请求，是选模型菜单无权付的代价，
+   所以这类路由保持"什么都没公布"。
+4. **一次一 provider，一页一次**：`CapabilityStore.ensure()` 合并重复请求、只读一次、不轮询、不订阅推送。
+   行内徽章在**菜单打开时**才触发读取（不开菜单不花这次调用），面板在**它自己打开时**触发。
+   provider 目录（`listConfigurableProviders`）也只在第一次需要时读一次。
+5. **挂载顺序不参与**：Remote 命名空间是异步挂载的（§2.2 最后一行），所以 LLM 面用**取值函数**而不是
+   激活时抓一次；适配器自有目录**每次读时**才 `ctx.get('remote.<ns>')`。晚注册的 reader 会把已经问过
+   的 provider 重问一遍（`addSource` 里那段），所以"先问后到"也能答上（单元门有这条）。
+6. **读不到就什么都不说**：适配器没公布的模型不进索引（`routeCapabilityOf` 返回 null；空数组也算
+   "没公布"，不是"公布了一个空集"）。对应地：**面板不渲染该分区**（不是画成关闭），行内不出该徽章。
+
+**文案规则（`panelCopy.ts`）也改了一条。** 原来"有状态行就不出分区提示"，理由是状态行是解释
+"为什么不能用"的唯一位置。适配器公布的事实是**另一件事**——它回答"屏上这个值从哪来"，状态行从不回答
+这个问题——所以现在只有 `settings.input.capability` / `settings.context.capability` 两条允许与状态行
+同时出现，其余一切照旧。这条规则由单元门 Rule 1 逐状态扫过（含能力轴 × 地址轴 × status × writable ×
+busy × capacityError = 320 个状态），Rule 6 另外保证"公布"那条提示列出的模态与开关状态一致。
+
+**为此收窄的一处显示**：不可寻址 + 适配器什么都没公布时，输入分区整块不再渲染。以前它渲染两个关闭的
+开关，那是一个没人验证过的断言；现在面板在该状态下只留状态行 + 强度分区。新增 `showsInputSection`
+与既有的 `showsContextField` 对称，两者都由单元门覆盖。
+
+**已知边界**：
+- 模态词表按适配器的 5 个 token（`text/image/audio/video/pdf`）本地化，但**行内只有 图文 两枚徽章**
+  （`facts.ts` 的词汇表就是这两项）；音频/视频/PDF 只在面板的提示句里出现。
+- `maxTokens` 读到了但**没有面陈述它**（`RouteCapability.maxTokens`，与既有的 `RouteAddress.maxTokens`
+  同样保留），因为行内四枚徽章与面板分区都还没有第三个数量的位置。
+- 事实是**页面级缓存**：适配器刷新了目录也不会推给已经开着的页面，刷新页面才重读。
+- 自有目录 Remote 的**具体命名空间是硬编码**的（`ADAPTER_CATALOGS`）：外部插件不能值导入适配器包，
+  所以路由 id 与命名空间只能钉在代码里并注明出处（适配器的 `lib/provider-identity.ts` 与
+  `models-contract.d.ts`）。
+
 ## 8.7 §5.18 实测记录：锚点消失时到底发生了什么
 
 环境：dsh 0.2.0-rc.2，profile `web`，`dmp-verify` 会话接在 http://127.0.0.1:3080。
@@ -1271,6 +1357,81 @@ Loader 用自己算出来的 `rev` 键给 client 模块，浏览器可以在同�
 | 40 | 56 | 1 |
 | 恢复 + 滚动 300px | 237 | 1 |
 | Escape 之后 | 237 | 0 |
+
+## 8.8 §5.19 实测记录：内置目录的模型，能力真的读到了（2026-10-04）
+
+环境：dsh 0.2.0-rc.2，profile `web`，真实浏览器（playwright-cli 会话 `verify`），
+`dsh web` 的带 token 地址；脚本 `scripts/_accept-capabilities.cjs`（只读：开菜单、开面板、读、截图，
+不选模型、不拨开关、不写设置）。
+
+**先断言产物是新的**：脚本先 `Network.setCacheDisabled` 再 reload，然后从
+`performance.getEntriesByType('resource')` 里找出插件自己的 client 模块并 `fetch` 它的正文，
+要求正文含 `opencodeGoModels` 与 `dsh-opencode-go` 才继续（§8.7 的教训）。
+本次 `rev=3042db879ec5`，正文 10,977,043 字节（整个 plugins 组合包）。
+
+**行内（`.dmp-row[aria-checked="true"]`，即当前会话正在用的那条内置目录路由）**：
+
+```
+DeepSeek V4.1 Flash，文字输入、图片输入、思考强度 High、上下文窗口 1M
+```
+
+四枚徽章齐全——改造前这条路由只有强度徽章（模态与窗口整条不出现）。换成同族的
+`GLM-5.3-Flash` 再跑一次：`文字输入、图片输入、思考强度 Max、上下文窗口 1M`。
+两次都是**不可寻址**的路由（状态行原文见下），所以这两行的事实只可能来自适配器目录：
+`models.dev` 对 `opencode-go` 的该模型写的是 `modalities.input = [text, image, video, pdf]`、
+`limit.context = 1000000`（本机 `~/.dsh/cache/dsh-opencode-go/models.dev.api.json` 可直接核对）。
+
+**面板（截图 `shots/accept-capabilities-panel.png`）**：
+
+| 面 | 实测 |
+|---|---|
+| 状态行 | 这个模型来自适配器内置目录，没有可编辑的声明，只能查看。 |
+| 输入类型 | 文字 / 图片**两个开关都亮**且都 `disabled` |
+| 输入提示 | 适配器内置目录公布：文字、图片 |
+| 上下文窗口 | 输入框**空**、placeholder `1M`、`disabled` |
+| 容量提示 | 适配器内置目录公布：1M（不可编辑） |
+| 思考强度 | Low / High / Max，当前档有勾 |
+
+`placement` 读到 `{x:787, y:20, width:280, height:402, visibility:'visible'}`——卡片真的画在页面上
+（不是测量态隐藏）。九条断言（`claims`）全部 true。
+
+**这一轮被实测抓到的两件事**（都不是产品缺陷，是验收脚本自己的坑，写下来免得下一轮重踩）：
+
+1. **按名字找行会找错。** 第一版 `rows.find(r => r.name.includes('DeepSeek V4.1 Flash'))` 命中的是
+   `commandcode` 那条**已声明**的路由（它的 `contextWindow`/`input` 就写在 profile 里），断言全绿而
+   真正要验的内置目录路由一根毛都没读到。改成只读 `aria-checked="true"` 的那一行后，
+   `sameNameRows` 顺带报出"有三个同名模型"——这正是当初会踩坑的原因。
+2. **弹窗会在两次读取之间关掉。** 面板 DOM 读完、截图之前，卡片已经不在 DOM 里了：§5.18 的判据是
+   "座位根不再占版面就关掉三个弹窗"，而 composer 在这个会话里正好重渲染过一次。截图因此拍到了
+   **没有面板的界面**（第一版 54KB，第二版 73KB）。改法是**先截图再细读**，并把 `placement`
+   一起读出来当"确实画出来了"的证据。
+
+**没有构造的分支**（本次仍然没有）：`settings/conflict` 自动重试、Host 拒绝写入、部署没挂设置服务/
+读取失败；以及**适配器什么都没公布**时的那个"连开关都不渲染"的分支——本机所有内置目录路由都能被
+`opencodeGoModels/read` 答上，所以它只有单元门覆盖。另外 `declared === true` 的守卫在真实 Host 上
+表现为"这些路由不出徽章"（`commandcode` / `staryears` 等），**没有去观测它是否真的没发那次请求**
+（观测手段得抓 host 侧出网，超出浏览器验收的范围）。
+
+**第二条通路（`llm/discoverModels`）也在真实 Host 上验过**，用的是一个**配置里没有声明条目**的
+provider：`xiaomi` 在 profile 里只有 `apiKeyEnv`，没有 `models` 列表，所以 pi-ai 按它**自带**的
+xiaomi 目录解析模型，路由不可寻址——那些行上的事实只可能来自 `llm/discoverModels`。搜索 `MiMo`
+拿到 13 行，全部带窗口徽章，其中：
+
+```
+MiMo V2.5       文字输入、图片输入、未声明思考档位、上下文窗口 1M
+MiMo V2.5 Pro   文字输入、不支持图片输入、未声明思考档位、上下文窗口 1M
+MiMo V2.6 Pro   文字输入、不支持图片输入、未声明思考档位、上下文窗口 1M
+```
+
+两条同族模型的**图片支持不同**（一个开一个关），这正是"读适配器目录"与"套一个默认"的区别：
+默认会给出一样的结果，而这里是目录里每模型自己的取值。另外 `xiaomi` 是 pi-ai **自带**的 provider
+（`catalogModels('xiaomi')` 非空），所以这次调用走的是安装目录、**没有出网**——与 §2.2 表格里那条
+"命中安装目录就直接回答"一致。
+
+**顺带验到的一条"不猜"**：同一批数据里有一行 `GLM-5.1` 只有**两枚**徽章
+（`思考强度 Default、上下文窗口 203K`），没有文字/图片徽章。原因是适配器目录对这个模型公布了
+窗口、**没有公布模态**（models.dev 的该条目没有可识别的 `modalities`）。徽章条照实只说窗口，
+而不是把"没公布"画成"不支持"——这正是本插件一直声称的规则，这次是真实数据自己撞出来的样本。
 
 ### 那个吃掉我一次的实现错误
 

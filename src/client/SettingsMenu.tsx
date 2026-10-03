@@ -43,14 +43,16 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import type {
-  DirectoryStore, ModelRoute, ModelSelection, ParamsFace, ParamsSnapshot, RouteAddress, SettingsOp, Translate,
+  CapabilityFace, CapabilitySnapshot, DirectoryStore, ModelRoute, ModelSelection, ParamsFace, ParamsSnapshot,
+  RouteAddress, RouteCapability, SettingsOp, Translate,
 } from './contract.ts'
 import { effortChoicesOf, effortLabelOf } from './effort.ts'
 import {
   capacityAction, contextFieldOf, contextHintOf, inputHintOf, noticeOf, restoreIsEmpty, shownInputOf,
-  showsContextField,
+  showsContextField, showsInputSection,
 } from './panelCopy.ts'
 import { formatContext, PANEL_MODALITIES, parseContext, resolveRoute } from './params.ts'
+import { rowKey } from './recent.ts'
 
 /** Unplaced portal card: hidden but laid out at a fixed origin so measurement is real. */
 const MEASURE_STYLE: CSSProperties = { visibility: 'hidden', left: 0, top: 0 }
@@ -69,6 +71,8 @@ export interface SettingsMenuProps {
   readonly directory: DirectoryStore
   /** The Host settings behind the panel (read for every displayed value). */
   readonly params: ParamsFace
+  /** The adapter-published facts behind the read-only branches. */
+  readonly capabilities: CapabilityFace
   /** A model selection is in flight: the effort list is inert. */
   readonly busy: boolean
   /** The card's own height budget, measured from the gear by the parent. */
@@ -115,7 +119,7 @@ function modalityLabel(modalities: readonly string[], t: Translate): string {
  * @returns the portaled panel, or null while no model is selected yet.
  */
 export function SettingsMenu({
-  anchorRef, panelRef, idPrefix, side, directory, params, busy, maxHeight, t, onSelect, onClose,
+  anchorRef, panelRef, idPrefix, side, directory, params, capabilities, busy, maxHeight, t, onSelect, onClose,
 }: SettingsMenuProps) {
   const [capacityDraft, setCapacityDraft] = useState<string | null>(null)
   const [capacityError, setCapacityError] = useState(false)
@@ -134,6 +138,10 @@ export function SettingsMenu({
     subscribe => params.subscribe(subscribe),
     () => params.getSnapshot(),
   )
+  const catalog: CapabilitySnapshot = useSyncExternalStore(
+    subscribe => capabilities.subscribe(subscribe),
+    () => capabilities.getSnapshot(),
+  )
   const position = useAnchoredPosition({ open: true, anchorRef, panelRef, side, align: 'end', gap: 8, margin: 12 })
 
   useEffect(() => { params.ensure() }, [params])
@@ -143,6 +151,18 @@ export function SettingsMenu({
     () => resolveRoute(snapshot, route),
     [snapshot, route?.provider, route?.model],
   )
+  // What the adapter published about this exact route. Read here rather than
+  // taken from a prop for the same reason the settings snapshot is: the panel
+  // must not be able to disagree with the row behind it.
+  const capability: RouteCapability | null = route === null
+    ? null
+    : catalog.routes[rowKey(route.provider, route.model)] ?? null
+  // The read only starts once the panel is open on a route, so a model nobody
+  // inspects never costs a Remote call. It is one call per provider per page
+  // load, and an answer that never arrives leaves the facts absent.
+  useEffect(() => {
+    if (route !== null) capabilities.ensure([route.provider])
+  }, [capabilities, route?.provider])
   const model = route === null ? null : modelOf(directory, route)
   const reasoning = model?.reasoning
   const choices = useMemo(
@@ -159,7 +179,7 @@ export function SettingsMenu({
   // Every line this panel says about its own state comes from `panelCopy`, which
   // is pure data: it decides WHICH line each state produces, and the unit gate
   // asserts that decision against the real dictionary.
-  const copyState = { address, snapshot, busy, capacityError } as const
+  const copyState = { address, capability, snapshot, busy, capacityError } as const
   const noticeLine = noticeOf(copyState, t)
   const sectionNotice = noticeLine === null ? null : t(noticeLine.key, noticeLine.params)
   const inputHintLine = inputHintOf(copyState, t)
@@ -179,8 +199,8 @@ export function SettingsMenu({
   // What the switches and the capacity field show, again from the pure module:
   // the declared list, or the adapter default in force while the entry declares
   // none. The hint below each is what says which of those it is.
-  const shownInput = shownInputOf(address)
-  const contextField = contextFieldOf(address)
+  const shownInput = shownInputOf(address, capability)
+  const contextField = contextFieldOf(address, capability)
   const editable = address !== null && snapshot.writable && !busy && !writing
   // The field shows the Host's own value; the local draft exists only between the
   // first keystroke and the commit, so the field can never display a stale value
@@ -463,37 +483,44 @@ export function SettingsMenu({
           of the card ends up with no fill at all (the page shows through it).
           The head and the state line above stay put; this body scrolls. */}
       <div className="dmp-settings-body">
-        <div className="dmp-settings-section">
-          <div className="dmp-settings-label">{t('settings.input.title')}</div>
-          <div className="dmp-settings-row">
-            <span className="dmp-settings-name">{t('settings.input.text')}</span>
-            <Switch
-              className="dmp-settings-switch"
-              checked={shownInput.includes('text')}
-              label={t('settings.input.text')}
-              disabled={!editable}
-              onChange={(next) => { toggleModality('text', next) }}
-            />
+        {showsInputSection(address, capability) && (
+          <div className="dmp-settings-section">
+            <div className="dmp-settings-label">{t('settings.input.title')}</div>
+            <div className="dmp-settings-row">
+              <span className="dmp-settings-name">{t('settings.input.text')}</span>
+              <Switch
+                className="dmp-settings-switch"
+                checked={shownInput.includes('text')}
+                label={t('settings.input.text')}
+                disabled={!editable}
+                onChange={(next) => { toggleModality('text', next) }}
+              />
+            </div>
+            <div className="dmp-settings-row">
+              <span className="dmp-settings-name">{t('settings.input.image')}</span>
+              <Switch
+                className="dmp-settings-switch"
+                checked={shownInput.includes('image')}
+                label={t('settings.input.image')}
+                disabled={!editable}
+                onChange={(next) => { toggleModality('image', next) }}
+              />
+            </div>
+            {inputHint !== null && <div className="dmp-settings-hint">{inputHint}</div>}
           </div>
-          <div className="dmp-settings-row">
-            <span className="dmp-settings-name">{t('settings.input.image')}</span>
-            <Switch
-              className="dmp-settings-switch"
-              checked={shownInput.includes('image')}
-              label={t('settings.input.image')}
-              disabled={!editable}
-              onChange={(next) => { toggleModality('image', next) }}
-            />
-          </div>
-          {inputHint !== null && <div className="dmp-settings-hint">{inputHint}</div>}
-        </div>
+        )}
 
         {/* Only a route WITH a declaration gets a field to declare into: with no
             address the field would be a disabled empty box restating the section
             header, while the notice above already carries the reason. The
             adapter's own default for this model is still stated — in the badge
-            on the model row and in the row's hover sentence. */}
-        {showsContextField(address) && (
+            on the model row and in the row's hover sentence.
+
+            A route with no address but a PUBLISHED window is the exception, and
+            it keeps the field because the placeholder is where that window is
+            stated: the box stays empty (nothing is declared) while naming the
+            number in force. */}
+        {showsContextField(address, capability) && (
           <div className="dmp-settings-section">
             <div className="dmp-settings-label">{t('settings.context.title')}</div>
             <div className="dmp-settings-row">

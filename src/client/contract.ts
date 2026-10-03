@@ -134,9 +134,57 @@ export interface RemoteSettingsFace {
   ): Promise<RemoteResult<SettingsNamespaceView>>
 }
 
+/** One draft-endpoint interrogation, in the shape `llm/discoverModels` accepts. */
+export interface ModelDiscoveryRequest {
+  /** Route the draft edits, when it edits one; an adapter that knows the route answers from its own registry. */
+  readonly provider?: string
+  readonly baseURL?: string
+  readonly api?: string
+  readonly apiKey?: string
+}
+
+/**
+ * One model an adapter's model discovery answered with.
+ *
+ * Every field but the id is optional because a listing may disclose an id and
+ * nothing else. `inputModalities` is documented as "absent means unknown"
+ * rather than "none", which is exactly what lets the row refuse to draw an
+ * unsupported badge instead of guessing one.
+ */
+export interface DiscoveredModel {
+  readonly id: string
+  readonly name?: string
+  readonly contextWindow?: number
+  readonly maxTokens?: number
+  readonly inputModalities?: readonly string[]
+}
+
 /** The generated `ctx.remote.llm` namespace: the provider directory behind the panel. */
 export interface RemoteLlmFace {
   listConfigurableProviders(): Promise<RemoteResult<readonly ConfigurableProvider[]>>
+  /**
+   * Model discovery, present only where the deployment mounts it.
+   *
+   * An OPTIONAL method rather than a separate face, because the directory read
+   * is what the panel cannot work without: a deployment that answers the
+   * directory but mounts no discovery must still get a working panel, just
+   * without the adapter-published facts.
+   */
+  discoverModels?(
+    settingsNs: string,
+    request: ModelDiscoveryRequest,
+  ): Promise<RemoteResult<readonly DiscoveredModel[]>>
+}
+
+/**
+ * One adapter's own model-catalog Remote (e.g. `remote.opencodeGoModels`).
+ *
+ * The second, and for some adapters the only, way to the facts: this plugin may
+ * read a catalog the adapter publishes as its own namespace. Extra fields on the
+ * answer are ignored — the structural shape here is the whole contract.
+ */
+export interface RemoteCatalogFace {
+  read(): Promise<RemoteResult<{ readonly models: readonly DiscoveredModel[] }>>
 }
 
 /** The two Remote faces the parameter panel needs, when the deployment mounts them. */
@@ -185,6 +233,50 @@ export interface RouteAddress {
   readonly declared: boolean
 }
 
+/**
+ * What one adapter PUBLISHED about one exact route, as opposed to what the
+ * settings document declares.
+ *
+ * The distinction is the whole point of the type: a route served straight from
+ * an adapter's installed catalog has no declaration to address, but the adapter
+ * still knows the model. These facts are read-only by construction — there is no
+ * entry to write them into.
+ */
+export interface RouteCapability {
+  /** Input types the adapter published; absent means it published none. */
+  readonly inputModalities?: readonly string[]
+  /** Context window the adapter published for this exact route. */
+  readonly contextWindow?: number
+  /** Output cap the adapter published. Carried for parity with the settings facts; no surface states it yet. */
+  readonly maxTokens?: number
+}
+
+/** Lifecycle of the adapter-catalog read behind the read-only facts. */
+export type CapabilityStatus = 'idle' | 'loading' | 'ready'
+
+/** The facts every adapter-catalog read has produced so far. */
+export interface CapabilitySnapshot {
+  readonly status: CapabilityStatus
+  /** Facts by the plugin's row key (`provider/model`). A route the adapter published nothing about is absent. */
+  readonly routes: Readonly<Record<string, RouteCapability>>
+}
+
+/** One adapter-owned catalog this plugin can read capability facts from. */
+export interface CapabilitySource {
+  /** Provider routes this reader answers for. */
+  readonly providers: readonly string[]
+  /** Read that adapter's published models; an empty list means it published none. */
+  read(): Promise<readonly DiscoveredModel[]>
+}
+
+/** The adapter-catalog face the seat hands to the row and the panel. */
+export interface CapabilityFace {
+  subscribe(listener: () => void): () => void
+  getSnapshot(): CapabilitySnapshot
+  /** Read these providers' routes; each provider is interrogated at most once. */
+  ensure(providers: readonly string[]): void
+}
+
 /** Outcome of one settings write. */
 export type WriteOutcome =
   | { readonly ok: true }
@@ -220,6 +312,8 @@ export interface SeatInjected {
   readonly select: (selection: ModelSelection) => Promise<RemoteResult<void> | undefined>
   /** The Host settings behind the parameter panel, shared by every seat. */
   readonly params: ParamsFace
+  /** The adapter-published facts behind the read-only branches, shared by every seat. */
+  readonly capabilities: CapabilityFace
 }
 
 /** The route a settings surface is about. */

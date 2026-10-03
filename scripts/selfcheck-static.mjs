@@ -232,6 +232,40 @@ check(
   read('src/client/SettingsMenu.tsx').includes('settings.target'),
 )
 
+// --- 7b. the facts the ADAPTER published ------------------------------------
+// A route the settings document cannot address used to show no modality badge
+// and no window while the panel drew both modality switches as OFF — a claim
+// about the model that nothing had verified. The facts now come from the
+// adapter's own catalog, and these assertions pin the decisions that keep that
+// read honest: it never reaches an endpoint, it is resolved late enough to
+// survive activation order, and it never becomes an edit.
+const capabilities = stripComments(read('src/client/capabilities.ts'))
+check(
+  'capabilities: a route the adapter only knows from configuration is never interrogated',
+  capabilities.includes('entry.declared === true'),
+)
+check(
+  'capabilities: the LLM face is resolved when a route is asked for, not at activation',
+  entry.includes('new CapabilityStore(') && entry.includes("ctx.get('remote.llm')"),
+)
+check(
+  'capabilities: an adapter-owned catalog is named by the route it serves',
+  entry.includes("'dsh-opencode-go'") && entry.includes('opencodeGoModels'),
+)
+check(
+  'capabilities: the panel states a published fact beside the notice',
+  read('src/client/panelCopy.ts').includes("'settings.input.capability'")
+    && read('src/client/panelCopy.ts').includes("'settings.context.capability'"),
+)
+check(
+  'capabilities: a route with nothing published gets no modality switch to misread',
+  read('src/client/SettingsMenu.tsx').includes('showsInputSection(address, capability)'),
+)
+check(
+  'capabilities: the row badges read the same published facts',
+  stripComments(read('src/client/Picker.tsx')).includes('capability: catalog.routes['),
+)
+
 // --- 8. copy: every key used exists, every key defined is used --------------
 // A stale `t('settings.openEdited')` after a rename renders the raw key, and a
 // leftover dictionary entry is dead copy; neither is visible in a screenshot.

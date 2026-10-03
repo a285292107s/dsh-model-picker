@@ -57,6 +57,7 @@ try {
         "export * from './src/client/recent.ts'",
         "export * from './src/client/dictionary.ts'",
         "export * from './src/client/panelCopy.ts'",
+        "export * from './src/client/capabilities.ts'",
       ].join('\n'),
       resolveDir: root,
       sourcefile: 'unit-entry.ts',
@@ -76,6 +77,7 @@ try {
     readProviderFilter, rememberProviderFilter, providerKeyOf, retireLegacyProviderFilter,
     recentGroupsFor, RECENT_ID, readRecent, remember,
     noticeOf, inputHintOf, contextHintOf, contextFieldOf, shownInputOf, showsContextField, capacityAction,
+    showsInputSection, routeCapabilityOf, CapabilityStore,
     restoreIsEmpty,
   } = await import(pathToFileURL(outfile).href)
 
@@ -453,7 +455,8 @@ try {
   // disables the card — had no sentence at all. So the DECISION is asserted here
   // against the real dictionary, and the panel only renders the result.
   const ready = { status: 'ready', error: null, writable: true }
-  const copyState = (address, extra = {}) => ({ address, snapshot: ready, busy: false, capacityError: false, ...extra })
+  const copyState = (address, extra = {}) =>
+    ({ address, capability: null, snapshot: ready, busy: false, capacityError: false, ...extra })
   /** The resolved copy line, as the panel would paint it. */
   const line = (copy) => copy === null ? null : t(copy.key, copy.params)
   const notice = (state) => line(noticeOf(state, t))
@@ -600,17 +603,22 @@ try {
   // the snapshots are examples of, swept over a grid of states, so the decision
   // cannot be inverted without a red gate.
   const states = []
+  /** One adapter-published fact set, and the empty one: both axes are swept. */
+  const PUBLISHED = { inputModalities: ['text', 'image'], contextWindow: 1000000 }
   for (const address of [second, first, resolveRoute(piAi, { provider: 'nope', model: 'second' }), null]) {
-    for (const status of ['ready', 'loading', 'idle', 'unavailable', 'error']) {
-      for (const writable of [true, false]) {
-        for (const busy of [true, false]) {
-          for (const capacityError of [true, false]) {
-            states.push({
-              address,
-              snapshot: { status, error: status === 'error' ? 'x' : null, writable },
-              busy,
-              capacityError,
-            })
+    for (const capability of [null, PUBLISHED]) {
+      for (const status of ['ready', 'loading', 'idle', 'unavailable', 'error']) {
+        for (const writable of [true, false]) {
+          for (const busy of [true, false]) {
+            for (const capacityError of [true, false]) {
+              states.push({
+                address,
+                capability,
+                snapshot: { status, error: status === 'error' ? 'x' : null, writable },
+                busy,
+                capacityError,
+              })
+            }
           }
         }
       }
@@ -621,14 +629,19 @@ try {
   })
 
   // Rule 1: the notice is the ONLY place an unusable state is explained. When it
-  // is present, no section repeats it — the one exception is a value the user
-  // just typed that could not be read, which is their own immediate problem and
-  // outranks the notice.
+  // is present, no section repeats it — with two exceptions, both of which are
+  // statements the notice does not make: a value the user just typed that could
+  // not be read (their own immediate problem), and a fact the ADAPTER published,
+  // which answers "where did the value on screen come from" rather than "why can
+  // I not edit it".
+  const besideANotice = new Set(['settings.input.capability', 'settings.context.capability'])
   const repeated = states.filter((state) => {
     if (noticeOf(state, t) === null || state.capacityError) return false
-    return inputHintOf(state, t) !== null || contextHintOf(state, t) !== null
+    return [inputHintOf(state, t), contextHintOf(state, t)]
+      .filter(hint => hint !== null)
+      .some(hint => !besideANotice.has(hint.key))
   })
-  equal('panel copy rule: a state with a notice emits no section hint', repeated.length, 0)
+  equal('panel copy rule: a state with a notice emits no section hint but a published fact', repeated.length, 0)
   const rejectedOutranks = states.filter(state =>
     state.capacityError && contextHintOf(state, t)?.key !== 'settings.context.invalid')
   equal('panel copy rule: a rejected value is always the capacity hint', rejectedOutranks.length, 0)
@@ -654,11 +667,17 @@ try {
   // Rule 4: when nothing outranks it, the capacity hint agrees with the field —
   // "declared" never appears over an empty box, and an undeclared window is never
   // called declared. A notice clears the hint entirely (rule 1), and a rejected
-  // value replaces it (the rule above), so both of those are checked first.
+  // value replaces it (the rule above), so both of those are checked first. The
+  // one hint a notice leaves standing is the published window, and only where the
+  // declaration supplies none.
   const mismatched = states.filter((state) => {
     if (state.address === null) return false
     if (state.capacityError) return false
-    if (noticeOf(state, t) !== null) return contextHintOf(state, t) !== null
+    if (noticeOf(state, t) !== null) {
+      const hint = contextHintOf(state, t)
+      if (hint === null) return false
+      return !(hint.key === 'settings.context.capability' && state.address.contextWindow === undefined)
+    }
     const declared = state.address.contextWindow !== undefined
     return declared
       ? contextHintOf(state, t)?.key !== 'settings.context.declared'
@@ -672,13 +691,91 @@ try {
   const wrongSwitchReport = states.filter((state) => {
     const line = inputHintOf(state, t)
     if (line === null || line.key !== 'settings.input.declared') return false
-    const shown = shownInputOf(state.address)
+    const shown = shownInputOf(state.address, state.capability)
       .map(item => (item === 'text' ? t('settings.input.text') : item === 'image' ? t('settings.input.image') : item))
       .join(t('settings.listJoin'))
     return line.params.list !== shown
   })
   equal('panel copy rule: a "declared" input hint matches what the switches show',
     wrongSwitchReport.length, 0)
+
+  // Rule 6: a hint that cites the adapter's catalog names exactly the list the
+  // switches are drawn from, for the same reason Rule 5 exists. It is the new
+  // sentence, so it gets the same guard.
+  const wrongPublishedReport = states.filter((state) => {
+    const line = inputHintOf(state, t)
+    if (line === null || line.key !== 'settings.input.capability') return false
+    const shown = shownInputOf(state.address, state.capability)
+      .map(item => (item === 'text' ? t('settings.input.text') : item === 'image' ? t('settings.input.image') : item))
+      .join(t('settings.listJoin'))
+    return line.params.list !== shown
+  })
+  equal('panel copy rule: a published input hint matches what the switches show',
+    wrongPublishedReport.length, 0)
+
+  // --- facts the ADAPTER published ------------------------------------------
+  // The route no settings document can address at all: this is the state that
+  // used to produce no modality badge, no window, and a panel whose two modality
+  // switches were drawn as OFF — a claim about the model that nothing had
+  // verified. The adapter publishes the truth; these assertions are what make the
+  // panel say it, and say where it came from, without ever offering an edit.
+  const unpublishedRoute = { provider: 'nope', model: 'second' }
+  const publishedCapability = { inputModalities: ['text', 'image'], contextWindow: 1000000 }
+  const publishedState = copyState(resolveRoute(piAi, unpublishedRoute), { capability: publishedCapability })
+  equal('published: the view-only reason is still stated exactly once',
+    notice(publishedState), '这个模型来自适配器内置目录，没有可编辑的声明，只能查看。')
+  equal('published: the input hint names the adapter catalog as the source',
+    inputHint(publishedState), '适配器内置目录公布：文字、图片')
+  equal('published: the capacity hint names the published window',
+    contextHint(publishedState), '适配器内置目录公布：1M（不可编辑）')
+  equal('published: the switches show the published list, not two offs',
+    [...shownInputOf(null, publishedCapability)], ['text', 'image'])
+  equal('published: the input section is on screen for it',
+    showsInputSection(null, publishedCapability), true)
+  equal('published: the field shows the published window as the fallback in force',
+    contextFieldOf(null, publishedCapability), { value: '', placeholder: '1M' })
+  equal('published: the capacity section is on screen for it',
+    showsContextField(null, publishedCapability), true)
+  equal('published: with nothing published, neither section is drawn',
+    [showsInputSection(null, null), showsContextField(null, null)], [false, false])
+  equal('published: an unpublished, unaddressable route states no input fact',
+    [...shownInputOf(null, null)], [])
+
+  // Precedence is the adapters' OWN (`declared ?? installed catalog ?? configured
+  // default`), so a declaration still wins, and the catalog beats the default.
+  equal('published: a declaration outranks the published window',
+    contextFieldOf(second, { contextWindow: 4000 }), { value: '800K', placeholder: '800K' })
+  equal('published: a declaration outranks the published modalities',
+    [...shownInputOf(second, { inputModalities: ['text', 'image'] })], ['text'])
+  const catalogOverDefault = copyState(first, { capability: { inputModalities: ['text'], contextWindow: 250000 } })
+  equal('published: the catalog outranks the provider-wide default window',
+    contextHint(catalogOverDefault), '适配器内置目录公布：250K（不可编辑）')
+  equal('published: the catalog outranks the provider-wide default modalities',
+    inputHint(catalogOverDefault), '适配器内置目录公布：文字')
+  equal('published: and the field carries that catalog number',
+    contextFieldOf(first, catalogOverDefault.capability), { value: '', placeholder: '250K' })
+
+  // The same facts on the row. A published route now states all four instead of
+  // dropping the three the settings document could not answer.
+  equal('facts: a published route states its modalities and its window',
+    shapeOf(badgeSpecsOf({
+      address: null, capability: publishedCapability, reasoning: undefined, effort: undefined, t,
+    })),
+    [['text', false, ''], ['image', false, ''], ['effort', true, ''], ['context', false, '1M']])
+  equal('facts: a declaration still outranks the published catalog',
+    shapeOf(badgeSpecsOf({
+      address: second,
+      capability: publishedCapability,
+      reasoning: undefined,
+      effort: undefined,
+      t,
+    })),
+    [['text', false, ''], ['image', true, ''], ['effort', true, ''], ['context', false, '800K']])
+  equal('facts: the published window outranks the provider default behind it',
+    shapeOf(badgeSpecsOf({
+      address: first, capability: { contextWindow: 250000 }, reasoning: undefined, effort: undefined, t,
+    })),
+    [['text', false, ''], ['image', false, ''], ['effort', true, ''], ['context', false, '250K']])
 
   // --- the one disabled control with no notice -------------------------------
   // "恢复默认" is disabled when the route declares nothing. That state has no
@@ -730,6 +827,70 @@ try {
     equal(`capacity commit: ${JSON.stringify(bad)} is rejected and stays rejected`,
       capacityAction(bad, '1M', 1_000_000, parseContext), { kind: 'reject' })
   }
+
+  // --- the store: which routes may be read, and how often --------------------
+  // The store is where "read the adapter's catalog" stops being a decoration and
+  // becomes a decision: a route the adapter only knows from configuration must
+  // NEVER be interrogated (that call leaves the process and talks to the
+  // endpoint), a route it ships is read once, and an adapter-owned Remote answers
+  // for routes no settings directory even names.
+  /** Let the store's fire-and-forget reads settle; they are not awaited by design. */
+  const settle = async () => {
+    await new Promise(done => setTimeout(done, 0))
+    await new Promise(done => setTimeout(done, 0))
+  }
+  const entryOf = (extra = {}) =>
+    ({ provider: 'p', displayName: 'P', settingsNs: 'ns', settingsPath: [], ...extra })
+  const llmOf = (entries, discovered, log) => ({
+    listConfigurableProviders: async () => ({ ok: true, value: entries }),
+    discoverModels: async (ns, request) => {
+      log.push(`${ns}:${request.provider}`)
+      return { ok: true, value: discovered }
+    },
+  })
+
+  {
+    const log = []
+    const store = new CapabilityStore(() => llmOf([entryOf({ declared: true })], [{ id: 'm', contextWindow: 1000 }], log))
+    store.ensure(['p'])
+    await settle()
+    equal('capabilities: a configuration-only route is never interrogated', log, [])
+    equal('capabilities: and it publishes no facts', store.getSnapshot().routes, {})
+  }
+  {
+    const log = []
+    const store = new CapabilityStore(() => llmOf(
+      [entryOf()], [{ id: 'm', contextWindow: 1000, inputModalities: ['text'] }], log,
+    ))
+    store.ensure(['p', 'p'])
+    await settle()
+    equal('capabilities: a shipped route is read once, through its own namespace', log, ['ns:p'])
+    equal('capabilities: the answer is indexed by the row key',
+      store.getSnapshot().routes, { 'p/m': { inputModalities: ['text'], contextWindow: 1000 } })
+    equal('capabilities: the read settles to ready', store.getSnapshot().status, 'ready')
+  }
+  {
+    const store = new CapabilityStore(() => null)
+    store.ensure(['dsh-opencode-go'])
+    await settle()
+    equal('capabilities: a route with no reader publishes nothing', store.getSnapshot().routes, {})
+    store.addSource({
+      providers: ['dsh-opencode-go'],
+      read: async () => [{ id: 'deepseek-v4.1-flash', contextWindow: 1000000, inputModalities: ['text', 'image'] }],
+    })
+    await settle()
+    equal('capabilities: a reader that mounts later still answers the earlier ask',
+      store.getSnapshot().routes,
+      { 'dsh-opencode-go/deepseek-v4.1-flash': { inputModalities: ['text', 'image'], contextWindow: 1000000 } })
+  }
+  // A model an adapter published nothing about yields NO facts rather than an
+  // empty fact set, which would read as "this model takes nothing".
+  equal('capabilities: a model with no published fact is not indexed',
+    routeCapabilityOf({ id: 'm', name: 'M' }), null)
+  equal('capabilities: an empty modality list is not a fact',
+    routeCapabilityOf({ id: 'm', inputModalities: [] }), null)
+  equal('capabilities: a useless window is dropped and the rest is kept',
+    routeCapabilityOf({ id: 'm', contextWindow: 0, maxTokens: 4096 }), { maxTokens: 4096 })
 
   // The copy that reaches a user must not name internals they cannot act on.
   const jargon = panelLines.filter(text => text !== null && /Host|适配器内置目录的模型|走会话选择/.test(text))

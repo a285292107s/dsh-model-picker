@@ -14,7 +14,10 @@
  * @module dsh-rabbit-model-picker/client
  */
 
-import type { ClientContext, RemoteFace, RemoteLlmFace, RemoteSettingsFace } from './contract.ts'
+import type {
+  ClientContext, DiscoveredModel, RemoteCatalogFace, RemoteFace, RemoteLlmFace, RemoteSettingsFace,
+} from './contract.ts'
+import { CapabilityStore } from './capabilities.ts'
 import { dictionaries, localTranslate, NS } from './dictionary.ts'
 import { ParamsStore } from './params.ts'
 import { retireLegacyProviderFilter } from './prefs.ts'
@@ -59,6 +62,43 @@ function settingsFaceOf(scope: ClientContext): RemoteFace | null {
 }
 
 /**
+ * Adapter-owned catalogs this plugin reads, and the route each one serves.
+ *
+ * `dsh-opencode-go` is the reason this table exists rather than a generic sweep
+ * of `llm/discoverModels`: it never registers a configurable provider (verified
+ * in its `lib/index.js`, which calls no `registerConfigurableProviders`), so its
+ * route is absent from every settings directory, `resolveRoute` can never
+ * address it, and its own `opencodeGoModels/read` — the catalog it publishes
+ * over Remote — is the only way to the facts. The route id is the adapter's own
+ * `PROVIDER_ID` (`lib/provider-identity.ts`), pinned here because an out-of-repo
+ * client plugin cannot value-import the package it is naming.
+ */
+const ADAPTER_CATALOGS: readonly { readonly providers: readonly string[], readonly namespace: string }[] = [
+  { providers: ['dsh-opencode-go'], namespace: 'opencodeGoModels' },
+]
+
+/**
+ * Read one adapter-owned catalog, or report that it published nothing.
+ *
+ * The namespace is looked up on every read rather than captured at activation:
+ * the Remote namespaces mount asynchronously, so a capture at activation would
+ * depend on plugin activation order. A namespace that is not mounted at all —
+ * the adapter is not installed — yields an empty list, which is exactly "nothing
+ * published" and leaves every route unstated.
+ * @param ctx - client root context.
+ * @param namespace - the adapter's Remote namespace name.
+ * @returns the models that adapter published, or an empty list.
+ */
+async function readCatalog(ctx: ClientContext, namespace: string): Promise<readonly DiscoveredModel[]> {
+  const face = ctx.get(`remote.${namespace}`) as RemoteCatalogFace | undefined
+  if (typeof face?.read !== 'function') return []
+  const result = await face.read()
+  if (!result.ok) return []
+  const models = result.value?.models
+  return Array.isArray(models) ? models : []
+}
+
+/**
  * Client plugin body: register copy and styles, then claim the model seat over
  * the shared directory.
  * @param ctx - client root context.
@@ -74,6 +114,19 @@ export function apply(ctx: ClientContext): void {
   // key the earlier shape wrote would otherwise sit in the store forever,
   // unread and unexplained.
   ctx.effect(() => retireLegacyProviderFilter(), 'dsh-rabbit-model-picker: legacy prefs')
+
+  // One adapter-catalog reader for the whole plugin, shared by every seat. The
+  // LLM face is resolved lazily (see `CapabilityStore`) while each adapter's own
+  // catalog is looked up per read, so neither depends on activation order.
+  const capabilities = new CapabilityStore(
+    () => (ctx.get('remote.llm') as RemoteLlmFace | undefined) ?? null,
+  )
+  for (const catalog of ADAPTER_CATALOGS) {
+    capabilities.addSource({
+      providers: catalog.providers,
+      read: () => readCatalog(ctx, catalog.namespace),
+    })
+  }
 
   ctx.inject(['slots', 'sessions', 'modelDirectories', 'remote', 'remote.session'], (scope) => {
     const models = scope.modelDirectories
@@ -96,6 +149,7 @@ export function apply(ctx: ClientContext): void {
           sessionId,
           directory: directory.store,
           params,
+          capabilities,
           translate,
           load: () => {
             if (available) directory.load().catch(() => { /* surfaced on the store */ })

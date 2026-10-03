@@ -11,11 +11,22 @@
  * WHERE THE FACTS COME FROM. The composer catalog publishes only
  * `{ provider, model, reasoning }`, so effort is read from the catalog entry
  * while modalities and capacity are read from the settings snapshot the panel
- * uses (`resolveRoute` over `describe`). Nothing is guessed: a fact the snapshot
- * cannot answer is left out rather than rendered as "unsupported", which is the
- * same rule the panel follows when it refuses to offer a switch that would do
- * nothing. `off` therefore always means "a declaration (or the adapter default
- * behind it) really does not list this" — never "we could not find out".
+ * uses (`resolveRoute` over `describe`) and, where the settings document cannot
+ * answer, from what the adapter PUBLISHED about its own route
+ * (`capabilities.ts`). Nothing is guessed: a fact neither source can answer is
+ * left out rather than rendered as "unsupported", which is the same rule the
+ * panel follows when it refuses to offer a switch that would do nothing. `off`
+ * therefore always means "a declaration, an adapter default, or the adapter's
+ * own published catalog really does not list this" — never "we could not find
+ * out".
+ *
+ * THE PRECEDENCE IS THE ADAPTERS' OWN, not this plugin's taste. Both adapters
+ * resolve a route as `declared field ?? installed catalog ?? configured default`
+ * (verified in `llm-pi-ai`'s `resolveEntry` and `dsh-opencode-go`'s
+ * `modelInfo`), so the strip reads the same ladder: what the profile declares,
+ * then what the adapter publishes per model, then the adapter's provider-wide
+ * default. Reading them in any other order would state a window the adapter is
+ * not actually using.
  *
  * ONE FACT = ONE BADGE. The four facts used to be four differently shaped
  * chips: the two boolean ones were icon-only capsules and the two valued ones
@@ -33,7 +44,7 @@
  * @module dsh-rabbit-model-picker/client/badges
  */
 
-import type { ModelReasoning, RouteAddress, Translate } from './contract.ts'
+import type { ModelReasoning, RouteAddress, RouteCapability, Translate } from './contract.ts'
 import { effortLabelOf } from './effort.ts'
 import type { BadgeFact } from './facts.ts'
 import { formatWindow } from './format.ts'
@@ -62,6 +73,8 @@ export interface BadgeSpec {
 export interface BadgeInput {
   /** This route's declaration, or null when the route cannot be addressed at all. */
   readonly address: RouteAddress | null
+  /** What the adapter published about this exact route, when it was read. */
+  readonly capability?: RouteCapability | undefined
   /** The catalog entry's reasoning metadata, when the adapter declares any. */
   readonly reasoning: ModelReasoning | undefined
   /** The effort in force for this row (Host-accepted on the selected row, else the adapter default). */
@@ -71,25 +84,34 @@ export interface BadgeInput {
 }
 
 /**
- * The modality list in force for one route.
+ * The modality list in force for one route, in the adapters' own precedence.
  * @param address - the route's declaration, or null when it has none.
- * @returns the declared list, else the adapter default; undefined when neither is readable.
+ * @param capability - what the adapter published about the route, when read.
+ * @returns the declared list, else the published one, else the adapter default;
+ *   undefined when none of the three is readable.
  */
-function modalitiesOf(address: RouteAddress | null): readonly string[] | undefined {
-  if (address === null) return undefined
-  if (address.input.length > 0) return address.input
-  if (address.defaultInput.length > 0) return address.defaultInput
+function modalitiesOf(
+  address: RouteAddress | null, capability: RouteCapability | undefined,
+): readonly string[] | undefined {
+  if (address !== null && address.input.length > 0) return address.input
+  if (capability?.inputModalities !== undefined && capability.inputModalities.length > 0) {
+    return capability.inputModalities
+  }
+  if (address !== null && address.defaultInput.length > 0) return address.defaultInput
   return undefined
 }
 
 /**
- * The context window in force for one route.
+ * The context window in force for one route, in the adapters' own precedence.
  * @param address - the route's declaration, or null when it has none.
- * @returns the declared window, else the adapter default; undefined when neither is declared.
+ * @param capability - what the adapter published about the route, when read.
+ * @returns the declared window, else the published one, else the adapter
+ *   default; undefined when none of the three is readable.
  */
-function capacityOf(address: RouteAddress | null): number | undefined {
-  if (address === null) return undefined
-  return address.contextWindow ?? address.defaultContextWindow
+function capacityOf(
+  address: RouteAddress | null, capability: RouteCapability | undefined,
+): number | undefined {
+  return address?.contextWindow ?? capability?.contextWindow ?? address?.defaultContextWindow
 }
 
 /**
@@ -97,10 +119,10 @@ function capacityOf(address: RouteAddress | null): number | undefined {
  * @param input - see {@link BadgeInput}.
  * @returns 1–4 badges; the sections whose facts are not readable are omitted.
  */
-export function badgeSpecsOf({ address, reasoning, effort, t }: BadgeInput): BadgeSpec[] {
+export function badgeSpecsOf({ address, capability, reasoning, effort, t }: BadgeInput): BadgeSpec[] {
   const specs: BadgeSpec[] = []
 
-  const modalities = modalitiesOf(address)
+  const modalities = modalitiesOf(address, capability)
   if (modalities !== undefined) {
     const text = modalities.includes('text')
     specs.push({
@@ -126,7 +148,7 @@ export function badgeSpecsOf({ address, reasoning, effort, t }: BadgeInput): Bad
     specs.push({ fact: 'effort', off: false, value: label, sentence: t('badge.effort', { level: label }) })
   }
 
-  const capacity = capacityOf(address)
+  const capacity = capacityOf(address, capability)
   if (capacity !== undefined) {
     const value = formatWindow(capacity)
     // A capacity the formatter cannot spell as a whole number is not stated at

@@ -20,7 +20,7 @@
  */
 
 import { CONTEXT_PLACEHOLDER, PANEL_MODALITIES, formatContext } from './params.ts'
-import type { ParamsSnapshot, RouteAddress, Translate } from './contract.ts'
+import type { ParamsSnapshot, RouteAddress, RouteCapability, Translate } from './contract.ts'
 
 /** One line of panel copy: a key plus the values it interpolates. */
 export interface CopyLine {
@@ -34,6 +34,8 @@ export interface CopyLine {
 export interface PanelCopyState {
   /** The resolved route address, or null when this route has no declaration. */
   readonly address: RouteAddress | null
+  /** What the adapter published about this route, or null when it published nothing readable. */
+  readonly capability: RouteCapability | null
   /** The Host settings snapshot: its status and whether it accepts form edits. */
   readonly snapshot: Pick<ParamsSnapshot, 'status' | 'error' | 'writable'>
   /** A selection is in flight, so every control of this panel is inert. */
@@ -54,6 +56,10 @@ export interface PanelCopy {
 
 /**
  * Render one modality list as copy.
+ *
+ * The five tokens are the ones an adapter catalog may name (`models.dev`'s own
+ * vocabulary); an unknown token is printed as it arrived rather than dropped, so
+ * a catalog that grows a modality is still readable instead of silently short.
  * @param modalities - modality ids.
  * @param t - the translator.
  * @returns the localized list ('文字、图片'), or '' when empty.
@@ -62,8 +68,24 @@ export function modalityLabel(modalities: readonly string[], t: Translate): stri
   return modalities
     .map(modality => modality === 'text'
       ? t('settings.input.text')
-      : modality === 'image' ? t('settings.input.image') : modality)
+      : modality === 'image'
+        ? t('settings.input.image')
+        : modality === 'audio'
+          ? t('settings.input.audio')
+          : modality === 'video'
+            ? t('settings.input.video')
+            : modality === 'pdf' ? t('settings.input.pdf') : modality)
     .join(t('settings.listJoin'))
+}
+
+/**
+ * The input types the ADAPTER published for this route, when it published any.
+ * @param capability - the route's adapter-published facts, or null.
+ * @returns the published list, or undefined when the adapter published none.
+ */
+function publishedInputOf(capability: RouteCapability | null): readonly string[] | undefined {
+  const published = capability?.inputModalities
+  return published === undefined || published.length === 0 ? undefined : published
 }
 
 /**
@@ -124,17 +146,33 @@ export function noticeKeyOf(state: PanelCopyState): CopyLine | null {
  * used to say so only in a `title`, which a disabled button cannot be focused to
  * reveal. An explanation that exists is not the same as a state that is
  * explained.
+ *
+ * A fact the ADAPTER published is the one line allowed to survive the notice: it
+ * states where the value on screen came from, not why a control is inert, and
+ * the notice never covers that. Its position in the ladder is the adapters' own
+ * precedence (`declared ?? installed catalog ?? configured default`), so the
+ * sentence matches the switches above it.
  * @param state - the panel state.
  * @param t - the translator.
  * @returns the hint's copy line, or null when the notice is the explanation.
  */
 export function inputHintOf(state: PanelCopyState, t: Translate): CopyLine | null {
-  if (noticeOf(state, t) !== null) return null
   const address = state.address
-  if (address === null) return null
-  if (address.input.length > 0) {
-    return { key: 'settings.input.declared', params: { list: modalityLabel(address.input, t) } }
+  const published = publishedInputOf(state.capability)
+  if (address !== null && address.input.length > 0) {
+    return noticeOf(state, t) === null
+      ? { key: 'settings.input.declared', params: { list: modalityLabel(address.input, t) } }
+      : null
   }
+  // From here down the hint states a fact the DECLARATION does not supply, so
+  // the notice cannot suppress it: the notice answers "why can I not edit this",
+  // the hint answers "where did the value on screen come from", and only the
+  // second question is unanswered in these states.
+  if (published !== undefined) {
+    return { key: 'settings.input.capability', params: { list: modalityLabel(published, t) } }
+  }
+  if (noticeOf(state, t) !== null) return null
+  if (address === null) return null
   if (address.defaultInput.length > 0) {
     return { key: 'settings.input.default', params: { list: modalityLabel(address.defaultInput, t) } }
   }
@@ -148,9 +186,11 @@ export function inputHintOf(state: PanelCopyState, t: Translate): CopyLine | nul
  * has to say so, otherwise the placeholder (which is where the adapter's stated
  * fallback is shown) reads as if the window were declared.
  *
- * Null in two cases: the section is not rendered at all (no address), or the
- * notice above already carries the reason the field is inert. `capacityError`
- * outranks both, because a rejected value is the user's own immediate problem.
+ * Null in two cases: the section is not rendered at all (no address and nothing
+ * published), or the notice above already carries the reason the field is inert.
+ * `capacityError` outranks both, because a rejected value is the user's own
+ * immediate problem. A value the ADAPTER published survives the notice, for the
+ * same reason the input hint does: it names a source, not a reason.
  * @param state - the panel state.
  * @param t - the translator.
  * @returns the hint's copy line, or null.
@@ -158,11 +198,17 @@ export function inputHintOf(state: PanelCopyState, t: Translate): CopyLine | nul
 export function contextHintOf(state: PanelCopyState, t: Translate): CopyLine | null {
   if (state.capacityError) return { key: 'settings.context.invalid' }
   const address = state.address
-  // No address means no field: there is nothing to declare into, so the section
-  // is not rendered and there is no hint to write.
-  if (address === null) return null
+  const published = state.capability?.contextWindow
+  if (address !== null && address.contextWindow !== undefined) {
+    return noticeOf(state, t) === null ? { key: 'settings.context.declared' } : null
+  }
+  // Same split as the input hint: a published number is the one thing the notice
+  // does not already say, so it stays on screen beside it.
+  if (published !== undefined) {
+    return { key: 'settings.context.capability', params: { value: formatContext(published) } }
+  }
   if (noticeOf(state, t) !== null) return null
-  if (address.contextWindow !== undefined) return { key: 'settings.context.declared' }
+  if (address === null) return null
   if (address.defaultContextWindow !== undefined) {
     return { key: 'settings.context.default', params: { value: formatContext(address.defaultContextWindow) } }
   }
@@ -171,13 +217,19 @@ export function contextHintOf(state: PanelCopyState, t: Translate): CopyLine | n
 
 /**
  * The capacity a route's field shows, and the placeholder when it shows none.
+ *
+ * The placeholder is "the number in force while nothing is declared", so a value
+ * the adapter published belongs there and never in `value`: `value` is the
+ * declaration, and a declaration this route does not have must not look like one.
  * @param address - the resolved route address, or null.
+ * @param capability - what the adapter published about the route, or null.
  * @returns the text for the field and its placeholder.
  */
-export function contextFieldOf(address: RouteAddress | null): { value: string, placeholder: string } {
-  if (address === null) return { value: '', placeholder: CONTEXT_PLACEHOLDER }
-  const declared = address.contextWindow
-  const fallback = address.defaultContextWindow
+export function contextFieldOf(
+  address: RouteAddress | null, capability: RouteCapability | null = null,
+): { value: string, placeholder: string } {
+  const declared = address?.contextWindow
+  const fallback = capability?.contextWindow ?? address?.defaultContextWindow
   return {
     value: declared === undefined ? '' : formatContext(declared),
     placeholder: declared === undefined
@@ -187,15 +239,41 @@ export function contextFieldOf(address: RouteAddress | null): { value: string, p
 }
 
 /**
- * Which modalities the two switches show as on.
+ * Which modalities the two switches show as on, in the adapters' own precedence.
  * @param address - the resolved route address, or null.
+ * @param capability - what the adapter published about the route, or null.
  * @returns the modality ids to show as enabled.
  */
-export function shownInputOf(address: RouteAddress | null): readonly string[] {
-  if (address === null) return []
-  if (address.input.length > 0) return address.input
-  if (address.defaultInput.length > 0) return address.defaultInput
-  return PANEL_MODALITIES
+export function shownInputOf(
+  address: RouteAddress | null, capability: RouteCapability | null = null,
+): readonly string[] {
+  if (address !== null && address.input.length > 0) return address.input
+  const published = publishedInputOf(capability)
+  if (published !== undefined) return published
+  if (address !== null && address.defaultInput.length > 0) return address.defaultInput
+  // A route with an address but no declared and no published list keeps the old
+  // optimistic default; a route with NO address and nothing published gets an
+  // empty list, and {@link showsInputSection} keeps that state off screen
+  // entirely rather than drawing two switches as "unsupported".
+  return address === null ? [] : PANEL_MODALITIES
+}
+
+/**
+ * Whether the input section is rendered at all.
+ *
+ * It is the read-only sibling of {@link showsContextField}: a route with no
+ * declaration and nothing published has no input truth to state, and the
+ * switches that used to be drawn for it claimed the model takes neither text nor
+ * images — a claim about the model that nothing had verified. The notice above
+ * already explains that the route is view-only.
+ * @param address - the resolved route address, or null.
+ * @param capability - what the adapter published about the route, or null.
+ * @returns whether the section belongs on screen.
+ */
+export function showsInputSection(
+  address: RouteAddress | null, capability: RouteCapability | null = null,
+): boolean {
+  return address !== null || publishedInputOf(capability) !== undefined
 }
 
 /**
@@ -217,12 +295,17 @@ export function restoreIsEmpty(state: PanelCopyState): boolean {
 /**
  * Whether the capacity section is rendered at all: a route with no declaration
  * has nothing to declare into, and a disabled empty box explains nothing that
- * the notice above it does not already say.
+ * the notice above it does not already say — UNLESS the adapter published a
+ * window, which the disabled field then shows as its placeholder (see
+ * {@link contextFieldOf}).
  * @param address - the resolved route address, or null.
+ * @param capability - what the adapter published about the route, or null.
  * @returns whether the field belongs on screen.
  */
-export function showsContextField(address: RouteAddress | null): boolean {
-  return address !== null
+export function showsContextField(
+  address: RouteAddress | null, capability: RouteCapability | null = null,
+): boolean {
+  return address !== null || capability?.contextWindow !== undefined
 }
 
 /** What committing the capacity field should do. */

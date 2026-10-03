@@ -101,7 +101,7 @@ function recentRowsFor(
  * @returns the trigger and, while open, the single-level menu.
  */
 export function Picker(props: PickerProps) {
-  const { locked, available, directory, load, select, params, translate, sessionId } = props
+  const { locked, available, directory, load, select, params, capabilities, translate, sessionId } = props
   const t = props.t ?? translate
   const state = useSyncExternalStore(
     subscribe => directory.subscribe(subscribe),
@@ -186,6 +186,13 @@ export function Picker(props: PickerProps) {
     subscribe => params.subscribe(subscribe),
     () => params.getSnapshot(),
   )
+  // What each adapter PUBLISHED about its own routes. Read here for the same
+  // reason, and one pass lower it feeds the same `badgeSpecsOf` call, so the
+  // strip cannot say one thing on the row and another in the panel.
+  const catalog = useSyncExternalStore(
+    subscribe => capabilities.subscribe(subscribe),
+    () => capabilities.getSnapshot(),
+  )
   const declaredCurrent = resolveRoute(paramsSnapshot, state.current)?.declared === true
 
   // One pass per catalog revision resolves the facts of every row: the rows are
@@ -196,6 +203,7 @@ export function Picker(props: PickerProps) {
       const selected = row.provider === state.current?.provider && row.model.id === state.current.model
       map.set(rowKey(row.provider, row.model.id), badgeSpecsOf({
         address: resolveRoute(paramsSnapshot, { provider: row.provider, model: row.model.id }),
+        capability: catalog.routes[rowKey(row.provider, row.model.id)],
         reasoning: row.model.reasoning,
         // The effort in force: what the Host accepted on the selected row, else
         // the level the adapter would start this model at.
@@ -204,7 +212,7 @@ export function Picker(props: PickerProps) {
       }))
     }
     return map
-  }, [catalogRows, effectiveEffort, paramsSnapshot, state.current, t])
+  }, [catalog, catalogRows, effectiveEffort, paramsSnapshot, state.current, t])
 
   const trimmedQuery = query.trim()
 
@@ -343,6 +351,15 @@ export function Picker(props: PickerProps) {
   // The gear's edited dot is a claim about the Host's config, so the settings
   // snapshot is read once per mounted seat rather than when the panel opens.
   useEffect(() => { params.ensure() }, [params])
+
+  // The row strip is the surface that states adapter-published facts, and it
+  // exists only while the menu is open — so the read starts with the menu, and a
+  // session that never opens it never spends the Remote call. `ensure` joins
+  // repeated asks, so re-opening the menu costs nothing.
+  useEffect(() => {
+    if (!open) return
+    capabilities.ensure(catalogRows.map(row => row.provider))
+  }, [capabilities, catalogRows, open])
 
   // Remember the route in use, whichever entry set it: the /model popup keeps
   // the same store, so this is how its switches reach the Recent group.
@@ -989,6 +1006,7 @@ export function Picker(props: PickerProps) {
           side={settingsSide}
           directory={directory}
           params={params}
+          capabilities={capabilities}
           busy={busy}
           maxHeight={settingsBudget}
           t={t}
