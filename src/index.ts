@@ -1,5 +1,5 @@
 /**
- * Host half of `dsh-model-picker`.
+ * Host half of `dsh-rabbit-model-picker`.
  *
  * The plugin has no Host-side work: the composer model seat is pure browser UI
  * over services another plugin already provides (`modelDirectories` owns the
@@ -7,7 +7,7 @@
  * plugin with an `apply`, so this stays an intentionally empty body rather than
  * a missing entry point.
  *
- * @module dsh-model-picker
+ * @module dsh-rabbit-model-picker
  */
 
 /**

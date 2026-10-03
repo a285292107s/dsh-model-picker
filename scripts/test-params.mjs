@@ -13,7 +13,7 @@
  *
  * Run: node scripts/test-params.mjs
  *
- * @module dsh-model-picker/test-params
+ * @module dsh-rabbit-model-picker/test-params
  */
 
 import { build } from 'esbuild'

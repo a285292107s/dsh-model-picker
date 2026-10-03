@@ -28,7 +28,7 @@
  * next to its neighbours", and the exact declared count stays available in the
  * parameter panel, which prints the stored number verbatim.
  *
- * @module dsh-model-picker/client/format
+ * @module dsh-rabbit-model-picker/client/format
  */
 
 /**

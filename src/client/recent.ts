@@ -13,7 +13,7 @@
  * An entry whose model is currently missing from the catalog is hidden by the
  * menu but never deleted: a transient catalog failure must not erase history.
  *
- * @module dsh-model-picker/client/recent
+ * @module dsh-rabbit-model-picker/client/recent
  */
 
 /**
@@ -26,7 +26,12 @@
  */
 export const RECENT_ID = '__recent__'
 
-/** Storage key; the version suffix lets a future shape change start clean. */
+/**
+ * Storage key; the version suffix lets a future shape change start clean.
+ *
+ * Kept at the pre-rename `dsh-model-picker.*` spelling on purpose: this is
+ * persisted user data, so a package rename must not wipe the recent-model list.
+ */
 const STORAGE_KEY = 'dsh-model-picker.recent.v1'
 
 /** How many routes are retained (the menu shows at most {@link RECENT_VISIBLE}). */

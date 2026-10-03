@@ -12,7 +12,7 @@
  * owns and stops the keys it consumes), because that is enough for a list whose
  * jobs are "show me the providers" and "pick one".
  *
- * @module dsh-model-picker/client/ProviderMenu
+ * @module dsh-rabbit-model-picker/client/ProviderMenu
  */
 
 import {

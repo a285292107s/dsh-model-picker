@@ -30,7 +30,7 @@
  * `1M` / `128K`, while `parseContext` (the parameter panel's own reader) keeps
  * accepting exactly what it always did and the stored token count is untouched.
  *
- * @module dsh-model-picker/client/badges
+ * @module dsh-rabbit-model-picker/client/badges
  */
 
 import type { ModelReasoning, RouteAddress, Translate } from './contract.ts'

@@ -2,7 +2,7 @@
  * Gate: the COMMITTED `lib/` must match what `src/` currently builds.
  *
  * `lib/` is committed because git installs
- * (`github:a285292107s/dsh-model-picker`) receive the repository verbatim and run
+ * (`github:a285292107s/dsh-rabbit-model-picker`) receive the repository verbatim and run
  * no build step. That makes staleness a *distribution* defect, not a local
  * inconvenience: ship an out-of-date `lib/` and every user's install imports the
  * previous behaviour — or, if `lib/` is missing entirely, fails with
@@ -26,7 +26,7 @@ import { build } from 'esbuild'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
-/** Must stay identical to the list in {@link module:dsh-model-picker/build-client}. */
+/** Must stay identical to the list in {@link module:dsh-rabbit-model-picker/build-client}. */
 const BASELINE_EXTERNALS = [
   'react',
   'react/jsx-runtime',

@@ -7,13 +7,13 @@
  * readable copy if the locale face is unavailable, and the registration then
  * simply omits its `locale` seat.
  *
- * @module dsh-model-picker/client/dictionary
+ * @module dsh-rabbit-model-picker/client/dictionary
  */
 
 import type { Translate } from './contract.ts'
 
 /** Locale namespace owned by this plugin. */
-export const NS = 'dsh-model-picker'
+export const NS = 'dsh-rabbit-model-picker'
 
 /** Simplified Chinese dictionary (the key-set source of truth). */
 export const zh: Record<string, string> = {

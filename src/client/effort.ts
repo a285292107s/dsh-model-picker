@@ -8,7 +8,7 @@
  * naming rules are still shared by the panel's radiogroup and the row's
  * read-only badge, so both surfaces always call a level the same thing.
  *
- * @module dsh-model-picker/client/effort
+ * @module dsh-rabbit-model-picker/client/effort
  */
 
 import type { ModelReasoning, Translate } from './contract.ts'

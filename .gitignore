@@ -1,5 +1,5 @@
 # Build output IS committed: `npm run build` regenerates lib/, and git installs
-# (`github:a285292107s/dsh-model-picker`) receive the repository verbatim — they
+# (`github:a285292107s/dsh-rabbit-model-picker`) receive the repository verbatim — they
 # run no build step, so an uncommitted lib/ makes every such install fail with
 # "failed to import" (no entry point). Keep lib/ in sync with src/ on every
 # change to src/: run `npm test` (build + gates) and commit both together.

@@ -16,7 +16,7 @@
  * state is explained" is then a fact the unit gate owns, not a convention the
  * next edit has to remember.
  *
- * @module dsh-model-picker/client/panelCopy
+ * @module dsh-rabbit-model-picker/client/panelCopy
  */
 
 import { CONTEXT_PLACEHOLDER, PANEL_MODALITIES, formatContext } from './params.ts'

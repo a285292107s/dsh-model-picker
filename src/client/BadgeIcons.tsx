@@ -51,7 +51,7 @@
  * and switches to the quiet tone — so "unsupported" is legible without relying
  * on color alone.
  *
- * @module dsh-model-picker/client/BadgeIcons
+ * @module dsh-rabbit-model-picker/client/BadgeIcons
  */
 
 import type { ReactElement, ReactNode } from 'react'

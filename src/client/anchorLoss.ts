@@ -19,7 +19,7 @@
  * transient (it can be minimized or closed), so a panel bound to it would have
  * to follow a control that outlives nothing.
  *
- * @module dsh-model-picker/client/anchorLoss
+ * @module dsh-rabbit-model-picker/client/anchorLoss
  */
 
 /**

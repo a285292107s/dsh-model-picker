@@ -5,7 +5,7 @@
  * must not import each other: `badges.ts` decides *which* facts are known, the
  * icon family draws them, and this is the one list both read.
  *
- * @module dsh-model-picker/client/facts
+ * @module dsh-rabbit-model-picker/client/facts
  */
 
 /** The four facts a row can badge, in canonical reading order. */

@@ -1,5 +1,5 @@
 /**
- * dsh-model-picker, browser half.
+ * dsh-rabbit-model-picker, browser half.
  *
  * One job: occupy the composer's `conversation.input.model` seat with a
  * single-level list, and read the SAME per-session directory `ui-model-selection`
@@ -11,7 +11,7 @@
  * keeps its registration and its `/model` contribution; deleting this plugin's
  * row restores it with no further change.
  *
- * @module dsh-model-picker/client
+ * @module dsh-rabbit-model-picker/client
  */
 
 import type { ClientContext, RemoteFace, RemoteLlmFace, RemoteSettingsFace } from './contract.ts'
@@ -67,13 +67,13 @@ export function apply(ctx: ClientContext): void {
   const locale = ctx.get('locale')
   const translate = locale === undefined ? localTranslate() : locale.bind(NS)
   if (locale !== undefined) {
-    ctx.effect(() => locale.register(NS, dictionaries), 'dsh-model-picker: dictionaries')
+    ctx.effect(() => locale.register(NS, dictionaries), 'dsh-rabbit-model-picker: dictionaries')
   }
-  ctx.effect(() => injectStyles(), 'dsh-model-picker: styles')
+  ctx.effect(() => injectStyles(), 'dsh-rabbit-model-picker: styles')
   // The provider narrowing is remembered per session now; the single unscoped
   // key the earlier shape wrote would otherwise sit in the store forever,
   // unread and unexplained.
-  ctx.effect(() => retireLegacyProviderFilter(), 'dsh-model-picker: legacy prefs')
+  ctx.effect(() => retireLegacyProviderFilter(), 'dsh-rabbit-model-picker: legacy prefs')
 
   ctx.inject(['slots', 'sessions', 'modelDirectories', 'remote', 'remote.session'], (scope) => {
     const models = scope.modelDirectories

@@ -17,7 +17,7 @@
  * from that one store; only view state (open, query, highlight, which popover is
  * open, the toast) is local.
  *
- * @module dsh-model-picker/client/Picker
+ * @module dsh-rabbit-model-picker/client/Picker
  */
 
 import {

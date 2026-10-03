@@ -6,5 +6,5 @@
 # this row (or disabling it) restores the default picker; nothing in the DSH
 # installation directory is touched.
 - insert:
-    - id: dsh-model-picker
-      name: dsh-model-picker
+    - id: dsh-rabbit-model-picker
+      name: dsh-rabbit-model-picker

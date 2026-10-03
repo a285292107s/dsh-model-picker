@@ -17,13 +17,18 @@
  * catalog no longer offers (see `Picker`), because a filter naming a provider
  * nothing can explain would narrow the list to nothing for no visible reason.
  *
- * @module dsh-model-picker/client/prefs
+ * @module dsh-rabbit-model-picker/client/prefs
  */
 
 /**
  * Storage key prefix; the session id is appended, so narrowing never leaks from
  * one conversation into another. The version suffix lets a future shape change
  * start clean.
+ *
+ * Deliberately still the pre-rename `dsh-model-picker.*` spelling: this is
+ * persisted user data, not an identity. Renaming the package must not silently
+ * discard a saved provider filter, and `localStorage` is shared across every
+ * plugin, so nothing here needs to track the package name.
  */
 const PROVIDER_KEY_PREFIX = 'dsh-model-picker.provider.v1:'
 

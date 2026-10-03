@@ -1,4 +1,4 @@
-# dsh-model-picker
+# dsh-rabbit-model-picker
 
 DSH 输入框模型选择器的外部替换件。把「Model / Effort 两格 → 各自二级面板」换成**一层列表**——
 搜索常驻、每行用只读徽章陈述事实（文字 / 图片 / 思考强度 / 上下文窗口），
@@ -67,24 +67,28 @@ DSH 输入框模型选择器的外部替换件。把「Model / Effort 两格 →
 ## 安装
 
 由 DSH 自己写 profile（不要手改 profile 的 `package.json` / `cordis.patch.yml`）。
-在插件的「添加插件」输入框里粘贴 **GitHub 仓库地址**即可：
+在插件的「添加插件」输入框里粘贴包名即可：
 
 ```
-github:a285292107s/dsh-model-picker
+dsh-rabbit-model-picker
 ```
 
-或写成 `https://github.com/a285292107s/dsh-model-picker`。
+也可以粘 GitHub 地址：
 
-这条命令：拉取仓库 → 加进 `dsh.profile.bundles` → 应用包内 `cordis.patch.yml` 的 insert 行。
+```
+github:a285292107s/dsh-rabbit-model-picker
+```
+
+或写成 `https://github.com/a285292107s/dsh-rabbit-model-picker`。
+
+这条命令：拉取/安装 → 加进 `dsh.profile.bundles` → 应用包内 `cordis.patch.yml` 的 insert 行。
 返回 `application: applied` 即生效；页面刷新后新座位接管。
-
-> ⚠ **必须带 `github:` 前缀或完整地址。** npm 上的 `dsh-model-picker` 是**另一个人的包**
-> （`Sanqi-normal/dsh-model-picker`，`main` 指向 `lib/host.js`）。只粘包名会装到它。
 
 > ⚠ **git 安装不会构建。** `lib/` 是**提交进仓库**的产物，不是安装时生成的——pnpm 拉 git
 > tarball 只搬运仓库里已有的文件，没有构建步骤。所以改了 `src/` 必须重新 `npm run build`
 > 并连同 `lib/` 一起提交，否则用户装到的是旧行为（或 `lib/` 缺失时报
 > `failed to import`）。`npm test` 里的 `test:fresh` 门会拦住这种漂移。
+> （npm 发布走 `files` 白名单，同样只有在 `prepublishOnly` 构建后才会带上 `lib/`。）
 
 **本机开发**用 `link:` 指向工作目录（改完 `npm run build` 刷新页面即生效）：
 
@@ -92,7 +96,7 @@ github:a285292107s/dsh-model-picker
 plugin_manager { action: "install_bundle", target: "C:/Users/28529/Desktop/dsh-model-picker" }
 ```
 
-**回退**：`plugin_manager { action: "remove_bundle", target: "dsh-model-picker" }`，或删掉 insert 行。
+**回退**：`plugin_manager { action: "remove_bundle", target: "dsh-rabbit-model-picker" }`，或删掉 insert 行。
 
 ## 开发
 

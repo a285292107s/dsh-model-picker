@@ -18,7 +18,7 @@
  *
  * Run: node scripts/check-contrast.mjs
  *
- * @module dsh-model-picker/check-contrast
+ * @module dsh-rabbit-model-picker/check-contrast
  */
 
 import { readFileSync } from 'node:fs'

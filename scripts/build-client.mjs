@@ -13,7 +13,7 @@
  * `dsh.client.external` — and anything outside this list is a real defect that
  * must fail the build instead of failing at runtime inside the module table.
  *
- * @module dsh-model-picker/build-client
+ * @module dsh-rabbit-model-picker/build-client
  */
 
 import { build } from 'esbuild'

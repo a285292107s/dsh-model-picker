@@ -10,7 +10,7 @@
  * entry point that grows a new primitive import must add it here, which keeps
  * the boundary visible in review.
  *
- * @module dsh-model-picker/client/primitives
+ * @module dsh-rabbit-model-picker/client/primitives
  */
 
 declare module '@deepseek-ai/dsh-client-ui-primitives' {

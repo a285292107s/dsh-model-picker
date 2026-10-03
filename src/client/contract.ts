@@ -10,7 +10,7 @@
  * `scripts/selfcheck-static.mjs` seat assertions guard the two values that the
  * shadowing depends on (`name` and `priority`).
  *
- * @module dsh-model-picker/client/contract
+ * @module dsh-rabbit-model-picker/client/contract
  */
 
 /** A complete model selection: provider + provider-owned model id + optional adapter effort. */

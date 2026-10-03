@@ -30,7 +30,7 @@
  * composer where a summoned keypad would cover it. `Tab` then walks the controls
  * in the order they are rendered, which is the order the switches appear in.
  *
- * @module dsh-model-picker/client/SettingsMenu
+ * @module dsh-rabbit-model-picker/client/SettingsMenu
  */
 
 import {

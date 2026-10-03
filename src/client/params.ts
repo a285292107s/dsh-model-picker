@@ -29,7 +29,7 @@
  * so such a route can only be read here. {@link resolveRoute} returns null for
  * it and the panel says so instead of pretending.
  *
- * @module dsh-model-picker/client/params
+ * @module dsh-rabbit-model-picker/client/params
  */
 
 import type {

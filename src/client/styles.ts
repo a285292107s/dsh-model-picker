@@ -11,11 +11,11 @@
  * `--dsh-composer-model-*` display variables are the composer's narrow-row
  * contract and are consumed exactly as the incumbent seat consumes them.
  *
- * @module dsh-model-picker/client/styles
+ * @module dsh-rabbit-model-picker/client/styles
  */
 
 /** Id of the owned style element (stable, so re-activation replaces it). */
-const STYLE_ELEMENT_ID = 'dsh-model-picker-styles'
+const STYLE_ELEMENT_ID = 'dsh-rabbit-model-picker-styles'
 
 /** The stylesheet. */
 const CSS = `

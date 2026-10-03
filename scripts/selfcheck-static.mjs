@@ -27,11 +27,14 @@
  *      boundary, and the chip inherits the session model's own provider;
  *  12. the component acts on every verdict the pure layer hands it;
  *  12b. the parameter panel's focus: where opening it lands, and the order `Tab`
- *      walks the controls in (which must be the order they are rendered in).
+ *      walks the controls in (which must be the order they are rendered in);
+ *  13. one package identity in the three places that must agree (bundle entry
+ *      id, Loader row, locale namespace) while the persisted `localStorage` keys
+ *      deliberately keep their pre-rename spelling.
  *
  * Run: node scripts/selfcheck-static.mjs
  *
- * @module dsh-model-picker/selfcheck-static
+ * @module dsh-rabbit-model-picker/selfcheck-static
  */
 
 import { readFileSync } from 'node:fs'
@@ -736,6 +739,37 @@ check(
 const pkg = JSON.parse(read('package.json'))
 check('manifest: exports["./client"] is declared', typeof pkg.exports?.['./client'] === 'object')
 check('manifest: dsh.client.platform is "web"', pkg.dsh?.client?.platform === 'web')
+
+// --- 13. one package identity, three places that must agree -----------------
+// A rename is not a one-file edit: the Loader row is resolved by name, the
+// client bundle registers itself under an id that MUST equal the package name
+// (`client-modules` requests the entry by package name through
+// `exports["./client"]`), and the locale namespace is the plugin's own identity.
+// Disagreement is silent — the row resolves to nothing and the seat simply never
+// appears — so pin all three to `package.json` here rather than trusting a
+// build-time assertion the reader may not have rebuilt from.
+const patch = read('cordis.patch.yml')
+const patchRow = /- insert:\s*\n\s*- id:\s*(\S+)\s*\n\s*name:\s*(\S+)/.exec(patch)
+check(
+  'identity: the bundle entry id, the Loader row and package.json agree',
+  patchRow !== null && patchRow[1] === pkg.name && patchRow[2] === pkg.name,
+  { pkg: pkg.name, rowId: patchRow?.[1] ?? null, rowName: patchRow?.[2] ?? null },
+)
+check('identity: the locale namespace is the package name', new RegExp(`export const NS = '${pkg.name}'`).test(read('src/client/dictionary.ts')))
+// The persisted keys are a DATA contract, not an identity: `localStorage` is
+// shared across plugins and these hold a user's remembered provider filter and
+// recent-model list. They keep their original spelling through any rename, so
+// assert that they did NOT follow the package name — a rename that swept them up
+// would silently discard every existing user's preferences.
+const prefs = read('src/client/prefs.ts')
+const recent = read('src/client/recent.ts')
+check(
+  'identity: the persisted localStorage keys do NOT follow the package name',
+  !new RegExp(`'${pkg.name}\\.(?:provider|recent)`).test(prefs + recent)
+    && /'dsh-model-picker\.provider\.v1:'/.test(prefs)
+    && /'dsh-model-picker\.recent\.v1'/.test(recent),
+  { prefsKey: /const PROVIDER_KEY_PREFIX = '([^']+)'/.exec(prefs)?.[1] ?? null, recentKey: /const STORAGE_KEY = '([^']+)'/.exec(recent)?.[1] ?? null },
+)
 
 console.log(failures === 0 ? 'static selfcheck: all good' : `static selfcheck: ${failures} failure(s)`)
 process.exitCode = failures > 0 ? 1 : 0
