@@ -101,7 +101,7 @@ github:a285292107s/dsh-rabbit-model-picker
 **本机开发**用 `link:` 指向工作目录（改完 `npm run build` 刷新页面即生效）：
 
 ```
-plugin_manager { action: "install_bundle", target: "C:/Users/28529/Desktop/dsh-model-picker" }
+plugin_manager { action: "install_bundle", target: "C:/Users/28529/Desktop/dsh-rabbit-model-picker" }
 ```
 
 **回退**：`plugin_manager { action: "remove_bundle", target: "dsh-rabbit-model-picker" }`，或删掉 insert 行。
@@ -118,6 +118,9 @@ npm run contrast     # 文字对比度门：两个主题下按真实字号判 WC
 npm run test:params  # 参数寻址/容量 + 行内事实推导 + 面板文案决策的单元门
 npm test             # build + test:fresh + selfcheck + contrast + test:params
 ```
+
+> 这五道门在 GitHub Actions 上随每次 push 跑一遍（`.github/workflows/test.yml`）：
+> `lib/` 漂移会在 push 阶段被拦下，而不是等某次 git 安装装到旧行为。
 
 > `lib/` 是提交进仓库的（见「安装」）。**动过 `src/` 就要把重建后的 `lib/` 一起提交**，
 > `npm run test:fresh` 会在 `lib/` 与 `src/` 不一致时失败。
@@ -196,6 +199,8 @@ scripts/_squeeze-probe.cjs     窄输入条压测（开发用，只读）
 | 宿主 label 令牌对比度（caption 2.08:1 / dimmed 1.23:1） | 不能用来写面板说明文字；`npm run contrast` 即为此存在 |
 | `MenuSurface` 底色是半透明子元素 | 对比度取决于合成到哪一层；门按两种底层里较差的那层判 |
 | 宿主 `Tag` 原语（`tone: neutral/quiet`，渲染成 `span`） | 行内徽章用它，"只读"是结构性的 |
+| `deepseek-account` / `deepseek-official` 是 provider id | 提供商排序（账号/官方置顶）与 chip 本地化写死这两个 id；宿主改名只会静默退化，selfcheck §13 把它们钉住 |
+| composer 卡片元素带 `[data-composer-card]` | 失败 toast 以它为锚；找不到时 toast 仍显示但没有锚定位置 |
 | 基线模块表隐式外部化 | 不要写进 `dsh.client.external` |
 
 ## 已知边界
@@ -205,13 +210,13 @@ scripts/_squeeze-probe.cjs     窄输入条压测（开发用，只读）
   - **思考强度** → 走会话选择 `directory.select()`，参数面板是唯一入口。
   - 写入**乐观不了**：面板显示来自 Host `describe`，拒绝时显示原话并保持原值；revision 冲突自动重读重试。
 - **行内徽章只陈述读得到的事**：声明 → 适配器发布的目录 → provider 级默认；三者都没有的内容**不渲染**（不是画成"不支持"）。强度徽章始终有，未声明档位时是划掉的。徽章整句同时是行的 `aria-label`。
-- **能力目录每页读一次，不轮询**：一个 provider 一次 Remote 调用（`ensure` 合并重复请求、结果缓存在插件实例里），页面刷新才会重读。行内徽章在**菜单打开时**才触发读取，从不开菜单的会话不花这次调用。
+- **能力目录每个已答复的 provider 每页读一次，不轮询**：一个 provider 一次 Remote 调用（`ensure` 合并重复请求、结果缓存在插件实例里），页面刷新才会重读。行内徽章在**菜单打开时**才触发读取，从不开菜单的会话不花这次调用。没读到答案的询问（LLM remote 还没挂载、目录读失败、传输失败）不算答复——provider 被释放，下次打开菜单/面板会重试；适配器自己拒绝的 discovery 仍算答复，不重试。
 - **`declared === true` 的路由不读**：那是适配器自己承认"只从配置知道这个路由"，它的 discovery 会去打 endpoint（联网 + 用凭据），不是选模型菜单该悄悄付的代价。这类路由保持"什么都没公布"。
 - **适配器即时重解析**是读代码确认的（`llm-pi-ai` / `llm-deepseek` 把参数声明为 `.volatile()` 并监听 `loader/volatile-update`），不是 UI 观测——目录至今只发布 `{ provider, model, reasoning }`。
 - **粘性分组头**：宿主观察器在页签隐藏时不回调，滚到头下会重叠。本插件改为始终填 `--dsw-alias-menu-group-header-fill`，代价是分组头一直有 22px 底色带。详见 DESIGN.md §5.8。
 - 目录加载失败、选择被拒、subagent 会话、`locked` 禁用态、pending 菊花已实现但**未在本机实测**。
 - 参数面板**只读分支**（路由不可寻址 / profile 不接受表单编辑 / 部署没挂设置服务）已实现，只做了单元层覆盖，**未在真实 Host 上构造**。
-- 设置快照在挂载时读一次、写入后用 Host 返回值更新；**没有订阅 host 的设置推送**，在「设置 → 模型」页改了要等下次写入或重开面板。
+- 设置快照在挂载时读一次、**菜单和参数面板每次打开时重读**、写入后用 Host 返回值更新；**没有订阅 host 的设置推送**——面板开着的时候去「设置 → 模型」页改，要等下次打开菜单/面板或本插件写入才看得到。
 - **最近使用**是全局共享（不按会话隔离），只记录目录里仍存在的项；列表最多显示 5 条，存储保留 12 条。`__recent__` 是保留 id，不是 provider。无记录时 chip 仍停在「最近使用」。
 - **provider chip 只回答"列表被窄化成了什么"**，不回答"会话在用哪个 provider"——后者在菜单里标「当前会话」。
 - **provider 筛选持久化但只记 id、按会话隔离**：`localStorage['dsh-model-picker.provider.v1:<会话 id>']`，不同窗口互不影响，旧的全局键挂载时清掉。回到「全部」时记忆清掉。筛选仍**只影响视图**。

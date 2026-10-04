@@ -1,4 +1,4 @@
-# 设计方案：`dsh-model-picker`（替换输入框右下角模型选择器）
+# 设计方案：`dsh-rabbit-model-picker`（替换输入框右下角模型选择器）
 
 > 状态：**已实现**（本文档在动工前逐条核对了宿主契约，见 §2 的「核对结果」）。
 > 目标：在不改 DSH 安装目录的前提下，用本地外部插件遮蔽 `conversation.input.model` 座位，
@@ -141,7 +141,7 @@ volatile（= 允许在线改）——这正是「设置 → 模型」页改同�
 ## 4. 包结构
 
 ```
-dsh-model-picker/
+dsh-rabbit-model-picker/
   package.json             # exports "."/"./client"/"./package.json"；dsh.client.platform=web
   tsconfig.json            # 仅用于 tsc --noEmit 类型检查
   src/index.ts             # 宿主半边：空 apply（行必须存在，行为为空）
@@ -175,7 +175,7 @@ dsh-model-picker/
 ui-conversation 声明 conversation.input.model
         │  ctx.slots.inject(name, cb)          ← 与声明顺序无关
         ▼
-dsh-model-picker  register({ priority: -10 })  ← 遮蔽默认 0 的 ModelSelect
+dsh-rabbit-model-picker  register({ priority: -10 })  ← 遮蔽默认 0 的 ModelSelect
         │  inject: (sessionId) => ({ sessionId, directory, available, params, ... })
         ▼
 Picker ── useSyncExternalStore(directory.store) ──► 列表/搜索/最近/每一行的事实徽章
@@ -590,7 +590,7 @@ Picker ── useSyncExternalStore(directory.store) ──► 列表/搜索/最�
 2. **挂载**：走 `plugin_manager install_bundle`（绝对包目录）——由 DSH 自己写 profile 的
    `package.json` 与 `cordis.patch.yml`，不手改 profile 文件、不碰 DSH 安装目录。
 3. **生效**：`application: applied` 即生效；页面刷新后新座位接管。**重建产物后只需刷新页面**：
-   宿主把客户端模块按产物哈希拼成 `/plugins/??…dsh-model-picker/client.js&rev=<hash>`，重建会换 `rev`，
+   宿主把客户端模块按产物哈希拼成 `/plugins/??…dsh-rabbit-model-picker/client.js&rev=<hash>`，重建会换 `rev`，
    刷新即取到新文件（2026-10-02 实测 `rev` 变化、新代码字符串在刷新后的 bundle 里可读到）。
 4. **回退**：删除 profile 里那一行插行（或把 `priority` 改成 `> 0` 让原座位重新胜出）。
 
@@ -1299,6 +1299,36 @@ busy × capacityError = 320 个状态），Rule 6 另外保证"公布"那条提�
 - 自有目录 Remote 的**具体命名空间是硬编码**的（`ADAPTER_CATALOGS`）：外部插件不能值导入适配器包，
   所以路由 id 与命名空间只能钉在代码里并注明出处（适配器的 `lib/provider-identity.ts` 与
   `models-contract.d.ts`）。
+
+### 5.20 第九次反馈（2026-10-04）：传输层兜底与每次打开重读（体检修复）
+
+项目体检发现的三类健壮性缺口，全部有单元门/静态门钉住：
+
+1. **写入路径会 REJECT，不只是拒绝。** `settings/mutate` 在传输层死亡（断连、超时）时是
+   promise reject，而不是 `{ ok: false }`。`ParamsStore.write` 原样把它抛出去，而面板用
+   `void params.write(...).then(...)` 消费——没有 `catch`，`writing` 永远不清，面板所有控件
+   永久禁用且无任何提示。现在 store 把 reject 转换成与「Host 拒绝」同一个出口
+   （`{ ok: false, conflict: false, message }`），面板的失败显示路径不变。
+   座位的选择路径同理：`directory.select()` reject 时走失败 toast，而不是无声无息。
+   门：`test-params.mjs` 的三个 params store 断言 + selfcheck §13。
+
+2. **快照只在「自己写」时更新。** 设置快照原来只在挂载时 `ensure()` 读一次，之后只有本插件
+   自己写成功才会动——在「设置 → 模型」页改了声明，本插件的徽章、齿轮圆点、面板显示全部
+   停在旧值，README 里写的「重开面板」其实也读不到（`ensure` 只在 `idle` 时读）。现在
+   模型菜单与参数面板**每次打开**都 `refresh()`；`read()` 在途时保留上一份好快照并合并并发
+   读，所以代价是每次打开一次读、画面在答案落地前不变。**仍未订阅 host 的设置推送**：
+   面板开着的时候去别处改，要等下次打开才看得到。门：selfcheck §13。
+
+3. **能力目录的询问是「一次定终身」，且 racing 读会被吞。** Remote 命名空间异步挂载，
+   一次没挂上（或目录读失败、传输失败）的询问原来永久消耗掉 `asked` 名额——整页生命周期
+   内该 provider 的事实徽章缺席。现在「没读到答案」与「适配器答复没有」分家：前者释放询问
+   下次打开重试，后者（含适配器拒绝 discovery）仍然一次定终身；`addSource` 在读取在途时
+   登记的 reader 不再被 inflight 守卫吞掉，改为读毕重跑。门：`test-params.mjs` 的四个新块
+   + selfcheck §7b 三条。
+
+顺带的小修：参数面板的档位选中态按 **effort id** 比较（原来比 label，两个档位同名会同时
+打勾）；provider 排序与 chip 本地化写死的 `deepseek-account` / `deepseek-official`、失败
+toast 的 `[data-composer-card]` 锚点这三个宿主内部标识补进了 selfcheck 与 README 契约表。
 
 ## 8.7 §5.18 实测记录：锚点消失时到底发生了什么
 

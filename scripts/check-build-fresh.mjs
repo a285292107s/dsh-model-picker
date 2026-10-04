@@ -15,7 +15,7 @@
  *
  * Run: node scripts/check-build-fresh.mjs
  *
- * @module dsh-model-picker/check-build-fresh
+ * @module dsh-rabbit-model-picker/check-build-fresh
  */
 
 import { execFileSync } from 'node:child_process'
