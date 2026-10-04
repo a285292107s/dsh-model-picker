@@ -27,9 +27,12 @@
  *      route therefore stays unread, and the row states no fact rather than a
  *      guessed one.
  *
- * WHAT A READ COSTS. One Remote call per provider per page load: {@link
- * CapabilityStore} never refetches a provider it has already asked, and joins
- * concurrent asks. There is deliberately no polling and no push subscription —
+ * WHAT A READ COSTS. One Remote call per ANSWERED provider per page load:
+ * {@link CapabilityStore} never refetches a provider it holds an answer for,
+ * and joins concurrent asks. An ask that never reached an answer — the LLM face
+ * was not mounted yet, a transport failure — is released for the next open to
+ * try again; that race is real because the Remote namespaces mount
+ * asynchronously. There is deliberately no polling and no push subscription —
  * an adapter catalog changes when its owner refreshes it, and the next page load
  * sees that.
  *
@@ -91,10 +94,14 @@ export function routeCapabilityOf(model: DiscoveredModel): RouteCapability | nul
 export class CapabilityStore implements CapabilityFace {
   private readonly listeners = new Set<() => void>()
   private readonly sources: CapabilitySource[] = []
-  /** Providers already asked for. An ask is never repeated. */
+  /** Providers a read has been dispatched for. */
   private readonly asked = new Set<string>()
   /** Providers whose read is still in flight. */
   private readonly inflight = new Set<string>()
+  /** Asked, but the read never reached an answer: the next open tries again. */
+  private readonly unanswered = new Set<string>()
+  /** Providers whose in-flight read predates a reader registered for them. */
+  private readonly requeue = new Set<string>()
   private readonly routes: Record<string, RouteCapability> = {}
   private snapshot: CapabilitySnapshot = INITIAL_SNAPSHOT
   private status: CapabilitySnapshot['status'] = 'idle'
@@ -126,15 +133,18 @@ export class CapabilityStore implements CapabilityFace {
    * Read these providers' routes.
    *
    * Called from a render path (the menu opening, the panel mounting), so it only
-   * schedules work: a provider already asked for costs nothing, and a failure
+   * schedules work: a provider already answered costs nothing, and a failure
    * leaves the facts absent rather than surfacing an error — these facts are
-   * decoration on a surface that already works without them.
+   * decoration on a surface that already works without them. A provider whose
+   * earlier ask never reached an answer is asked again.
    * @param providers - provider route ids whose models are on screen.
    */
   ensure(providers: readonly string[]): void {
     for (const provider of providers) {
-      if (provider.length === 0 || this.asked.has(provider)) continue
+      if (provider.length === 0) continue
+      if (this.asked.has(provider) && !this.unanswered.has(provider)) continue
       this.asked.add(provider)
+      this.unanswered.delete(provider)
       void this.read(provider)
     }
   }
@@ -150,9 +160,18 @@ export class CapabilityStore implements CapabilityFace {
    */
   addSource(source: CapabilitySource): void {
     this.sources.push(source)
-    for (const provider of [...this.asked]) {
-      if (!source.providers.includes(provider)) continue
+    for (const provider of source.providers) {
+      // Still in flight: the running read went out before this reader existed,
+      // so it cannot carry its facts. `asked` still holds the provider, which
+      // is what keeps this re-ask alive past the inflight guard — the settled
+      // read re-runs it (see `read`).
+      if (this.inflight.has(provider)) {
+        this.requeue.add(provider)
+        continue
+      }
+      if (!this.asked.has(provider) && !this.unanswered.has(provider)) continue
       this.asked.delete(provider)
+      this.unanswered.delete(provider)
       this.ensure([provider])
     }
   }
@@ -166,57 +185,82 @@ export class CapabilityStore implements CapabilityFace {
     this.inflight.add(provider)
     this.status = 'loading'
     this.publish()
-    let models: readonly DiscoveredModel[] | null = null
+    let models: readonly DiscoveredModel[]
     try {
       models = await this.fetch(provider)
     } catch {
-      // A discovery refusal (an adapter that mounts no discovery, an endpoint
-      // that is down) is not an error this surface reports: the route simply
-      // stays one the adapter published nothing about.
-      models = null
+      // The ask never reached an answer — the LLM face was not mounted yet, the
+      // provider directory read failed, the transport rejected. Mark the ask
+      // retryable instead of consuming it: paying that race once and stating
+      // nothing for the rest of the page is the exact failure an asynchronously
+      // mounted Remote makes possible. An ANSWERED provider — "published none"
+      // included — is still asked exactly once (see `fetch`).
+      this.inflight.delete(provider)
+      this.unanswered.add(provider)
+      this.status = this.inflight.size === 0 ? 'ready' : 'loading'
+      this.publish()
+      return
     }
     this.inflight.delete(provider)
-    if (models !== null) {
-      for (const model of models) {
-        if (typeof model?.id !== 'string' || model.id.length === 0) continue
-        const capability = routeCapabilityOf(model)
-        if (capability !== null) this.routes[rowKey(provider, model.id)] = capability
-      }
+    for (const model of models) {
+      if (typeof model?.id !== 'string' || model.id.length === 0) continue
+      const capability = routeCapabilityOf(model)
+      if (capability !== null) this.routes[rowKey(provider, model.id)] = capability
     }
     this.status = this.inflight.size === 0 ? 'ready' : 'loading'
     this.publish()
+    // A reader registered while THIS ask was in flight re-runs it here: the
+    // racing read went out without that reader, and without this re-run its
+    // facts would never arrive.
+    if (this.requeue.delete(provider)) {
+      this.asked.delete(provider)
+      this.unanswered.delete(provider)
+      this.ensure([provider])
+    }
   }
 
   /**
    * Read one provider's published models through whichever way in applies.
    * @param provider - provider route id.
-   * @returns its models, or null when no reader answers for it.
+   * @returns its models; an EMPTY list is an answer ("published none"), and an
+   *   answered provider is never asked again.
+   * @throws when no answer arrived at all — the LLM face is not mounted yet,
+   *   the provider directory read failed, the transport rejected. `read` marks
+   *   the ask retryable instead of consuming it.
    */
-  private async fetch(provider: string): Promise<readonly DiscoveredModel[] | null> {
+  private async fetch(provider: string): Promise<readonly DiscoveredModel[]> {
     const source = this.sources.find(candidate => candidate.providers.includes(provider))
     if (source !== undefined) return await source.read()
     const llm = this.llm()
     const discover = llm?.discoverModels
-    if (llm === null || llm === undefined || discover === undefined) return null
+    if (llm === null || llm === undefined || discover === undefined) {
+      // Remote namespaces mount asynchronously: absent here can mean "not yet"
+      // rather than "never", so this is no answer, not an empty one.
+      throw new Error('the llm remote is not mounted')
+    }
     const directory = await this.providers(llm)
-    const entry = directory?.find(candidate => candidate.provider === provider)
+    const entry = directory.find(candidate => candidate.provider === provider)
     // `declared` is the adapter's own admission that it ships nothing about this
     // route, which is precisely when its discovery leaves the process and talks
     // to the endpoint. Refusing that call is the point, not an oversight.
-    if (entry === undefined || entry.declared === true) return null
+    if (entry === undefined || entry.declared === true) return []
     const result = await discover.call(llm, entry.settingsNs, { provider })
-    return result.ok ? result.value : null
+    // A refusal the adapter itself answered with is an answer: the route stays
+    // unstated and the ask is consumed, exactly as before.
+    return result.ok ? result.value : []
   }
 
   /**
    * The provider directory, read once and shared by every later lookup.
    * @param llm - the LLM face to read it from.
-   * @returns the directory, or null when this deployment mounts none.
+   * @returns the directory.
+   * @throws when the directory read fails — a failed read must not be cached as
+   *   an empty answer (see `read`).
    */
-  private async providers(llm: RemoteLlmFace): Promise<readonly ConfigurableProvider[] | null> {
+  private async providers(llm: RemoteLlmFace): Promise<readonly ConfigurableProvider[]> {
     if (this.directory !== null) return this.directory
     const result = await llm.listConfigurableProviders()
-    if (!result.ok) return null
+    if (!result.ok) throw new Error(result.error.message)
     this.directory = result.value
     return result.value
   }

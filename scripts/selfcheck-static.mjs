@@ -28,7 +28,12 @@
  *  12. the component acts on every verdict the pure layer hands it;
  *  12b. the parameter panel's focus: where opening it lands, and the order `Tab`
  *      walks the controls in (which must be the order they are rendered in);
- *  13. one package identity in the three places that must agree (bundle entry
+ *  13. transport failures SURFACE: a write or selection that rejects instead of
+ *      answering, an ask that never reached an answer is retried, and every open
+ *      re-reads the settings snapshot (an external edit must stay visible);
+ *  14. the §5.18 anchor-loss rule: popovers dismiss when the seat root stops
+ *      occupying the page;
+ *  15. one package identity in the three places that must agree (bundle entry
  *      id, Loader row, locale namespace) while the persisted `localStorage` keys
  *      deliberately keep their pre-rename spelling.
  *
@@ -231,6 +236,17 @@ check(
   'panel: renders the declaration it writes (namespace + path)',
   read('src/client/SettingsMenu.tsx').includes('settings.target'),
 )
+// A write that REJECTS (a dead transport, not a Host refusal) used to propagate
+// out of `ParamsStore.write` into a `then` with no `catch`: `writing` stayed set
+// forever, every control of the panel stayed disabled, and no message appeared.
+// The store must convert the rejection into the same outcome a refused write
+// takes, so the panel's existing refusal display is the only path needed.
+const writeBody = /async write\([\s\S]*?private read\(\)/.exec(params)?.[0] ?? ''
+check(
+  'params: a write that rejects fails the write instead of hanging the panel',
+  writeBody.includes('try {') && writeBody.includes('catch') && writeBody.includes('ok: false'),
+  { writeBody: writeBody.slice(0, 160) },
+)
 
 // --- 7b. the facts the ADAPTER published ------------------------------------
 // A route the settings document cannot address used to show no modality badge
@@ -264,6 +280,25 @@ check(
 check(
   'capabilities: the row badges read the same published facts',
   stripComments(read('src/client/Picker.tsx')).includes('capability: catalog.routes['),
+)
+// A read that never reached an answer (the LLM face not mounted YET, a transport
+// failure) used to consume the ask permanently: one bad race, and the provider's
+// facts stayed absent for the whole page. These pin the three halves of the fix:
+// the failed ask is released, an unanswered read is not cached as an empty
+// answer, and a reader registered mid-flight re-runs the racing ask instead of
+// being swallowed by the inflight guard.
+check(
+  'capabilities: an ask that never reaches an answer is released for a later try',
+  /catch\s*\{[\s\S]*?unanswered\.add\(provider\)/.test(capabilities),
+)
+check(
+  'capabilities: a failed directory read is not cached as an empty answer',
+  /if \(!result\.ok\) throw/.test(capabilities),
+)
+check(
+  'capabilities: a reader registered mid-flight re-runs the racing ask once it settles',
+  capabilities.includes('this.requeue')
+    && /requeue\.delete\(provider\)[\s\S]*?ensure\(\[provider\]\)/.test(capabilities),
 )
 
 // --- 8. copy: every key used exists, every key defined is used --------------
@@ -692,7 +727,33 @@ check(
   { rule: /\.dmp-settings:focus-visible\s*\{[^}]*\}/.exec(stylesCode)?.[0].replace(/\s+/g, ' ') ?? null },
 )
 
-// --- 13. §5.18 anchor loss: the popovers must CLOSE, not drift --------------
+// --- 13. transport failures surface, and every open re-reads the snapshot ---
+// Two rejection paths used to vanish: `ParamsStore.write` could REJECT (a dead
+// transport, not a Host refusal) into a `then` with no `catch` — the panel
+// stayed disabled forever with no message — and the seat's selection had the
+// same hole. And a snapshot that only moved when this plugin wrote kept an
+// external edit (Settings → Models) invisible until the next write or a page
+// reload. These gates pin the surfacing points, the re-read on every open, and
+// the two host identifiers this plugin reads that no inspection face declares.
+check(
+  'transport: a rejected selection surfaces through the toast',
+  /select\(selection\)\.then\(settleSelection\)\.catch\(/.test(picker),
+)
+check(
+  'transport: opening the model menu re-reads the settings snapshot',
+  /\{\s*if \(!open\) return\s*void params\.refresh\(\)\s*\}, \[open, params\]\)/.test(picker),
+)
+check(
+  'transport: opening the parameter panel re-reads the settings snapshot',
+  /useEffect\(\(\) => \{\s*void params\.refresh\(\)\s*\}, \[params\]\)/.test(settings),
+)
+check(
+  'transport: the pinned provider ids and the toast anchor are present',
+  picker.includes("'deepseek-account'") && picker.includes("'deepseek-official'")
+    && picker.includes("'[data-composer-card]'"),
+)
+
+// --- 14. §5.18 anchor loss: the popovers must CLOSE, not drift --------------
 // The bug this gates is invisible to every other check. The parameter panel is
 // placed from a `position: fixed` anchor rect and portaled to the body, so when
 // the Host elects a question card into `conversation.composer` and switches the
@@ -774,7 +835,7 @@ const pkg = JSON.parse(read('package.json'))
 check('manifest: exports["./client"] is declared', typeof pkg.exports?.['./client'] === 'object')
 check('manifest: dsh.client.platform is "web"', pkg.dsh?.client?.platform === 'web')
 
-// --- 13. one package identity, three places that must agree -----------------
+// --- 15. one package identity, three places that must agree -----------------
 // A rename is not a one-file edit: the Loader row is resolved by name, the
 // client bundle registers itself under an id that MUST equal the package name
 // (`client-modules` requests the entry by package name through

@@ -299,10 +299,23 @@ export class ParamsStore implements ParamsFace {
   ): Promise<WriteOutcome> {
     const face = this.face
     if (face === null) return { ok: false, conflict: false, message: 'settings are unavailable' }
-    let response: RemoteResult<SettingsNamespaceView> = await face.settings.mutate(ns, ops, expectedRevision)
-    if (!response.ok && response.error.code === 'settings/conflict') {
-      await this.read()
-      response = await face.settings.mutate(ns, ops, this.snapshot.namespaces[ns]?.revision)
+    let response: RemoteResult<SettingsNamespaceView>
+    try {
+      response = await face.settings.mutate(ns, ops, expectedRevision)
+      if (!response.ok && response.error.code === 'settings/conflict') {
+        await this.read()
+        response = await face.settings.mutate(ns, ops, this.snapshot.namespaces[ns]?.revision)
+      }
+    } catch (error: unknown) {
+      // A transport failure REJECTS instead of answering { ok: false }, and an
+      // unhandled rejection here would leave `writing` set forever: every
+      // control of the panel stays disabled with no refusal message and no way
+      // out. Fail the write through the same door a refused write takes.
+      return {
+        ok: false,
+        conflict: false,
+        message: error instanceof Error ? error.message : String(error),
+      }
     }
     if (!response.ok) {
       return { ok: false, conflict: response.error.code === 'settings/conflict', message: response.error.message }

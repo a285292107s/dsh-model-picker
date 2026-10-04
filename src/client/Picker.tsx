@@ -349,8 +349,18 @@ export function Picker(props: PickerProps) {
   }
 
   // The gear's edited dot is a claim about the Host's config, so the settings
-  // snapshot is read once per mounted seat rather than when the panel opens.
+  // snapshot is read once per mounted seat — and re-read on every open (below),
+  // because an edit made in the Settings → Models page must not stay invisible
+  // until this plugin's next own write.
   useEffect(() => { params.ensure() }, [params])
+
+  // Each open re-reads the Host. `read()` keeps the last good snapshot while the
+  // answer is in flight and joins concurrent asks, so this costs one read per
+  // open and changes nothing on screen until the fresher answer lands.
+  useEffect(() => {
+    if (!open) return
+    void params.refresh()
+  }, [open, params])
 
   // The row strip is the surface that states adapter-published facts, and it
   // exists only while the menu is open — so the read starts with the menu, and a
@@ -561,7 +571,13 @@ export function Picker(props: PickerProps) {
     // does, so the card's keys still reach the menu.
     setSelectionFocus(true)
     triggerRef.current?.focus()
-    void select(selection).then(settleSelection)
+    // A transport-level failure REJECTS rather than answering { ok: false };
+    // without this catch it would be an unhandled rejection and a silent
+    // nothing on screen, instead of the refusal toast a Host-side rejection
+    // takes.
+    void select(selection).then(settleSelection).catch((error: unknown) => {
+      showFailure(t('error.action', { message: error instanceof Error ? error.message : String(error) }))
+    })
   }
 
   const choose = (row: Row): void => {

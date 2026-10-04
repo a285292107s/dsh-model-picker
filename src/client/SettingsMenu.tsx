@@ -46,7 +46,7 @@ import type {
   CapabilityFace, CapabilitySnapshot, DirectoryStore, ModelRoute, ModelSelection, ParamsFace, ParamsSnapshot,
   RouteAddress, RouteCapability, SettingsOp, Translate,
 } from './contract.ts'
-import { effortChoicesOf, effortLabelOf } from './effort.ts'
+import { effortChoicesOf } from './effort.ts'
 import {
   capacityAction, contextFieldOf, contextHintOf, inputHintOf, noticeOf, restoreIsEmpty, shownInputOf,
   showsContextField, showsInputSection,
@@ -144,7 +144,11 @@ export function SettingsMenu({
   )
   const position = useAnchoredPosition({ open: true, anchorRef, panelRef, side, align: 'end', gap: 8, margin: 12 })
 
-  useEffect(() => { params.ensure() }, [params])
+  // The panel reads the Host at mount — which IS each open, because the parent
+  // renders this panel only while it is open — so a declaration edited in the
+  // Settings → Models page is what this panel shows, not the snapshot the seat
+  // mounted with.
+  useEffect(() => { void params.refresh() }, [params])
 
   const route: ModelRoute | null = current === null ? null : { provider: current.provider, model: current.model }
   const address: RouteAddress | null = useMemo(
@@ -170,10 +174,9 @@ export function SettingsMenu({
     [reasoning, t],
   )
   // The effort in force: what the Host accepted, else the adapter's default.
+  // The radio marks compare by ID, not by label: two levels may share a name,
+  // and a mark that lights two rows at once is a lie about the Host's answer.
   const activeEffort = current?.reasoningEffort ?? reasoning?.defaultEffort
-  const activeLabel = reasoning === undefined
-    ? undefined
-    : effortLabelOf(reasoning, activeEffort, t)
   const modelLabel = model?.name ?? (route === null ? '' : `${route.provider}/${route.model}`)
 
   // Every line this panel says about its own state comes from `panelCopy`, which
@@ -559,14 +562,14 @@ export function SettingsMenu({
                   key={choice.key}
                   type="button"
                   role="radio"
-                  aria-checked={choice.label === activeLabel}
+                  aria-checked={choice.effort === activeEffort}
                   className="dmp-effort-item"
                   disabled={busy}
                   onClick={() => { pickEffort(choice.effort) }}
                 >
                   <span className="dmp-effort-name">{choice.label}</span>
                   <span className="dmp-effort-check">
-                    {choice.label === activeLabel ? <IconCheckOutlineRegular /> : null}
+                    {choice.effort === activeEffort ? <IconCheckOutlineRegular /> : null}
                   </span>
                 </button>
               ))}

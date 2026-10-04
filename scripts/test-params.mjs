@@ -77,7 +77,7 @@ try {
     readProviderFilter, rememberProviderFilter, providerKeyOf, retireLegacyProviderFilter,
     recentGroupsFor, RECENT_ID, readRecent, remember,
     noticeOf, inputHintOf, contextHintOf, contextFieldOf, shownInputOf, showsContextField, capacityAction,
-    showsInputSection, routeCapabilityOf, CapabilityStore,
+    showsInputSection, routeCapabilityOf, CapabilityStore, ParamsStore,
     restoreIsEmpty,
   } = await import(pathToFileURL(outfile).href)
 
@@ -883,6 +883,140 @@ try {
       store.getSnapshot().routes,
       { 'dsh-opencode-go/deepseek-v4.1-flash': { inputModalities: ['text', 'image'], contextWindow: 1000000 } })
   }
+  {
+    // The LLM face is ABSENT at the first ask — the async-mount race the store
+    // is built around. The ask must publish nothing AND stay retryable: a later
+    // open, with the face mounted, has to land the facts.
+    const log = []
+    let face = null
+    const store = new CapabilityStore(() => face)
+    store.ensure(['p'])
+    await settle()
+    equal('capabilities: an ask with no llm face publishes nothing', store.getSnapshot().routes, {})
+    face = llmOf([entryOf()], [{ id: 'm', contextWindow: 2000 }], log)
+    store.ensure(['p'])
+    await settle()
+    equal('capabilities: the unanswered ask is retried once the face mounts', log, ['ns:p'])
+    equal('capabilities: the retry indexes the facts',
+      store.getSnapshot().routes, { 'p/m': { contextWindow: 2000 } })
+  }
+  {
+    // A failed provider-directory read is not an answer either: the ask stays
+    // retryable, and success is the only thing cached.
+    const log = []
+    let directoryOk = false
+    const store = new CapabilityStore(() => ({
+      listConfigurableProviders: async () => directoryOk
+        ? { ok: true, value: [entryOf()] }
+        : { ok: false, error: { code: 'x', message: 'boom' } },
+      discoverModels: async (ns, request) => {
+        log.push(`${ns}:${request.provider}`)
+        return { ok: true, value: [{ id: 'm', contextWindow: 3000 }] }
+      },
+    }))
+    store.ensure(['p'])
+    await settle()
+    equal('capabilities: a failed directory read answers nothing', log, [])
+    directoryOk = true
+    store.ensure(['p'])
+    await settle()
+    equal('capabilities: a failed directory read is retried on the next ask', log, ['ns:p'])
+  }
+  {
+    // A refusal the adapter itself returned IS an answer: the ask is consumed,
+    // and no later open re-sends it.
+    const log = []
+    let refuse = true
+    const store = new CapabilityStore(() => ({
+      listConfigurableProviders: async () => ({ ok: true, value: [entryOf()] }),
+      discoverModels: async (ns, request) => {
+        log.push(`${ns}:${request.provider}`)
+        return refuse
+          ? { ok: false, error: { code: 'llm/discovery-refused', message: 'no' } }
+          : { ok: true, value: [{ id: 'm', contextWindow: 5000 }] }
+      },
+    }))
+    store.ensure(['p'])
+    await settle()
+    equal('capabilities: a discovery refusal publishes no facts', store.getSnapshot().routes, {})
+    refuse = false
+    store.ensure(['p'])
+    await settle()
+    equal('capabilities: a refusal is an answer, so it is never retried', log, ['ns:p'])
+  }
+  {
+    // A reader registered while the racing read is STILL IN FLIGHT must not be
+    // swallowed by the inflight guard: the settled read re-runs the ask through
+    // the reader that now exists.
+    let release
+    const gate = new Promise(done => { release = done })
+    const log = []
+    const store = new CapabilityStore(() => ({
+      listConfigurableProviders: async () => ({ ok: true, value: [entryOf()] }),
+      discoverModels: async (ns, request) => {
+        log.push(`llm:${request.provider}`)
+        await gate
+        return { ok: true, value: [] }
+      },
+    }))
+    store.ensure(['p'])
+    await new Promise(done => setTimeout(done, 0))
+    store.addSource({
+      providers: ['p'],
+      read: async () => { log.push('source:p'); return [{ id: 'm', contextWindow: 4000 }] },
+    })
+    equal('capabilities: a reader registered mid-flight does not re-run yet', log, ['llm:p'])
+    release()
+    await settle()
+    equal('capabilities: the racing ask is re-run through the reader once it settles',
+      log, ['llm:p', 'source:p'])
+    equal('capabilities: and the re-run lands the reader\'s facts',
+      store.getSnapshot().routes, { 'p/m': { contextWindow: 4000 } })
+  }
+
+  // --- the write path: a transport failure is an outcome, not a hang ---------
+  // `settings/mutate` REJECTS on a dead transport instead of answering
+  // { ok: false }. The panel consumes `write` with a `then` and no `catch`, so
+  // the store itself must never reject: a rejection would leave `writing` set
+  // forever — every control disabled, no message, no way out.
+  {
+    const store = new ParamsStore({
+      settings: {
+        describe: async () => ({ ok: true, value: { writable: true, hasDocument: true, namespaces: [] } }),
+        mutate: async () => { throw new Error('transport down') },
+      },
+      llm: { listConfigurableProviders: async () => ({ ok: true, value: [] }) },
+    })
+    equal('params store: a transport failure fails the write instead of rejecting',
+      await store.write('ns', [{ op: 'set', path: ['a'], value: 1 }], 3),
+      { ok: false, conflict: false, message: 'transport down' })
+  }
+  {
+    // The documented retry: a revision conflict re-reads and re-applies once,
+    // with the revision the fresh read answered.
+    const calls = []
+    const store = new ParamsStore({
+      settings: {
+        describe: async () => ({
+          ok: true,
+          value: { writable: true, hasDocument: true, namespaces: [{ ns: 'ns', revision: 2, value: {} }] },
+        }),
+        mutate: async (ns, ops, expectedRevision) => {
+          calls.push(expectedRevision)
+          return calls.length === 1
+            ? { ok: false, error: { code: 'settings/conflict', message: 'stale' } }
+            : { ok: true, value: { ns, revision: 2, value: {} } }
+        },
+      },
+      llm: { listConfigurableProviders: async () => ({ ok: true, value: [] }) },
+    })
+    equal('params store: a revision conflict retries against the fresh revision',
+      await store.write('ns', [{ op: 'set', path: ['a'], value: 1 }], 1), { ok: true })
+    equal('params store: the retry went out with the re-read revision', calls, [1, 2])
+  }
+  equal('params store: no settings face fails the write softly',
+    await new ParamsStore(null).write('ns', [], 1),
+    { ok: false, conflict: false, message: 'settings are unavailable' })
   // A model an adapter published nothing about yields NO facts rather than an
   // empty fact set, which would read as "this model takes nothing".
   equal('capabilities: a model with no published fact is not indexed',
