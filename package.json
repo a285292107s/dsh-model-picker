@@ -44,6 +44,21 @@
     "prepublishOnly": "npm test"
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/a285292107s/dsh-rabbit-model-picker.git"
+  },
+  "bugs": {
+    "url": "https://github.com/a285292107s/dsh-rabbit-model-picker/issues"
+  },
+  "homepage": "https://github.com/a285292107s/dsh-rabbit-model-picker#readme",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "client-plugin",
+    "model-picker"
+  ],
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.0",
